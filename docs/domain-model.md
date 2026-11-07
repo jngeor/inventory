@@ -213,7 +213,7 @@ Se exponen por el endpoint de "alertas activas" de Inventario (`docs/README.md` 
 * `MINIMUM_STOCK`: se genera cuando, tras una operación, el stock real (`physicalStock`) queda por debajo del `minimumStock` del producto (consultado a Catálogo). No se duplica mientras ya exista una alerta `ACTIVE` para ese producto, y se resuelve sola cuando el stock vuelve a superar el mínimo.
 * `UNUSUAL_MOVEMENT`: una por cada `StockMovement` con `unusual = true`.
 * `INSUFFICIENT_STOCK`: una por cada reserva que queda en `PENDING`.
-* `SYNC_FAILURE`: fallos de sincronización CQRS (`docs/README.md` 3.1).
+* `SYNC_FAILURE`: fallos de sincronización CQRS (`docs/README.md` 3.1). Lleva el `productId` afectado (si lo hay) y la referencia al evento en la DLQ. Plazo de resolución: 24 h; se resuelve tras reprocesar el evento y reconstruir la proyección del producto.
 
 ### Relaciones entre agregados
 
@@ -238,10 +238,14 @@ Varios agregados cambian en una misma transacción (ej. `DeliveryNote` + `StockM
 
 **Publicados para el lado lectura (CQRS, vía outbox + Debezium)**: `StockMovementRecorded`, `ProductStockChanged`, `DeliveryNoteRegistered`, `StockTransferred`, `AlertRaised`, `AlertStatusChanged`, `LocationChanged`.
 
-### Modelos de lectura (BD de lectura)
+**Clave de partición (decidido 2026-11-01)**: `StockMovementRecorded` y `ProductStockChanged` se publican con **`productId` como clave** del mensaje de Kafka, no con el id de su agregado. Así todos los eventos de un mismo producto caen en la misma partición y el lado de lectura los aplica en el orden en que se confirmaron, que es lo que necesita el saldo acumulado de `KardexEntry`. Los demás eventos usan el id de su agregado. Ver `docs/README.md` 3.1.
+
+### Modelos de lectura (BD de lectura, MongoDB)
 
 * **`KardexEntry`**: una fila por `StockMovement`, con su **saldo acumulado** por producto (y por ubicación cuando la hay). Es la base de los reportes de kardex.
-* **`ProductStockView`**: stock real, reservado y disponible por producto, con el desglose referencial por ubicación.
+* **`ProductStockView`**: stock real, reservado y disponible por producto, con el desglose referencial por ubicación. Lleva `outOfSync` (+ `outOfSyncSince`): `true` cuando un evento de ese producto terminó en la DLQ; mientras esté así, las consultas de stock y de kardex del producto lo informan (`docs/README.md` 3.1).
+
+**Reconstrucción por producto**: `RebuildProductProjection(productId)` (administrativo) borra y vuelve a generar el `ProductStockView` y los `KardexEntry` de un producto desde la BD de escritura, y quita la marca `outOfSync`. Es idempotente. Se usa para resolver un `SYNC_FAILURE` en el plazo de 24 h.
 * **`ActiveAlertView`**: alertas `ACTIVE`/`ACKNOWLEDGED` para el panel del administrador.
 
 ## Órdenes

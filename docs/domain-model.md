@@ -91,30 +91,31 @@ Saldo de stock de un producto. Es la única fuente de verdad para las validacion
 **Invariantes**: `reservedStock` ≥ 0 y `reservedStock` ≤ `physicalStock` (el disponible nunca es negativo).
 
 **Operaciones**:
-* `increase(q)`: ingreso por guía de remisión, devolución o reposición por cancelación desde `PROCESSED` → `physicalStock += q`.
+* `increase(q)`: ingreso por guía de remisión, devolución, reposición por cancelación desde `PROCESSED` o ajuste de entrada → `physicalStock += q`.
 * `reserve(q)`: solo si `availableStock()` ≥ `q` → `reservedStock += q`. El real no cambia.
 * `release(q)`: `reservedStock -= q` (cancelación de un pedido aún no procesado). El real no cambia.
 * `consume(q)`: `physicalStock -= q` y `reservedStock -= q` (al procesar el pedido).
+* `decrease(q)`: ajuste de salida; solo si `availableStock()` ≥ `q` → `physicalStock -= q`. No puede dejar el stock real por debajo del reservado, porque esas unidades ya están comprometidas con pedidos.
 
 #### `StockMovement` (raíz de agregado, inmutable)
 
-Cada línea del kardex. Solo se agrega (append-only); nunca se modifica ni se elimina. Una corrección se hace con un movimiento nuevo.
+Cada línea del kardex. Solo se agrega (append-only); nunca se modifica ni se elimina, y ninguna API lo permite. Una corrección se hace con un movimiento nuevo, mediante un `StockAdjustment`.
 
 | Campo | Tipo | Notas |
 |---|---|---|
 | `id` | `StockMovementId` | |
 | `productId` | `ProductId` | |
 | `locationId` | `LocationId` (opcional) | Referencial (ver decisiones). |
-| `type` | `MovementType` | `INBOUND` (guía de remisión), `OUTBOUND` (pedido procesado), `RETURN` (devolución de pedido entregado), `CANCELLATION` (reposición por cancelar un pedido ya procesado), `TRANSFER_OUT` / `TRANSFER_IN` (traslado). |
+| `type` | `MovementType` | `INBOUND` (guía de remisión), `OUTBOUND` (pedido procesado), `RETURN` (devolución de pedido entregado), `CANCELLATION` (reposición por cancelar un pedido ya procesado), `TRANSFER_OUT` / `TRANSFER_IN` (traslado), `ADJUSTMENT_IN` / `ADJUSTMENT_OUT` (ajuste de stock). |
 | `quantity` | `Quantity` | > 0. El signo lo determina `type`. |
 | `documentDate` | `Instant` | Fecha del documento de respaldo. |
 | `createdAt` | `Instant` | Fecha en que se registra en el sistema. |
-| `source` | `MovementSource` (value object) | Documento que origina el movimiento: `sourceType` (`DELIVERY_NOTE`, `ORDER`, `STOCK_TRANSFER`) + `sourceId`. |
+| `source` | `MovementSource` (value object) | Documento que origina el movimiento: `sourceType` (`DELIVERY_NOTE`, `ORDER`, `STOCK_TRANSFER`, `STOCK_ADJUSTMENT`) + `sourceId`. |
 | `unusual` | `boolean` | Se calcula al crear el movimiento: `true` si \|`createdAt` − `documentDate`\| > 48 h (`docs/README.md` 2.2). |
 
 **Invariantes**: `quantity` > 0; inmutable una vez creado.
 
-**Efecto en el stock real**: `INBOUND`/`RETURN`/`CANCELLATION` suman y `OUTBOUND` resta. Las reservas no generan movimientos, porque no cambian el stock real.
+**Efecto en el stock real**: `INBOUND`/`RETURN`/`CANCELLATION`/`ADJUSTMENT_IN` suman y `OUTBOUND`/`ADJUSTMENT_OUT` restan. Las reservas no generan movimientos, porque no cambian el stock real.
 
 **A futuro**: salidas de mercadería por daño o vencimiento (mermas) → nuevo tipo de salida (ej. `WRITE_OFF`, con motivo) que resta del stock real. `MovementType` debe poder ampliarse sin cambiar el resto del modelo. `TRANSFER_OUT` + `TRANSFER_IN` siempre van en pares y **se compensan** (suman cero), así que no cambian el total del producto; solo cambian dónde está registrada la mercadería.
 
@@ -170,6 +171,25 @@ No es un agregado: no hay microservicio de Compras, así que la guía solo guard
 
 **Invariantes**: `fromLocationId` ≠ `toLocationId`; ubicaciones activas. Mientras la ubicación sea referencial, **no se valida** que haya suficiente cantidad en el origen, porque el stock por ubicación no es una fuente de verdad. Si la ubicación pasa a ser obligatoria, esta validación se activa.
 
+#### `StockAdjustment` — Ajuste de stock (raíz de agregado)
+
+Corrige un error de registro o una diferencia detectada en un conteo físico. No es una merma: la mercadería dañada o vencida irá por `WRITE_OFF` cuando exista (ver `StockMovement`).
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `id` | `StockAdjustmentId` | |
+| `productId` | `ProductId` | |
+| `direction` | `AdjustmentDirection` | `IN` o `OUT`. |
+| `quantity` | `Quantity` | > 0. |
+| `reason` | `String` | **Obligatorio.** |
+| `correctedMovementId` | `StockMovementId` (opcional) | Movimiento que se corrige, si aplica. Vacío en un ajuste por conteo físico. |
+| `adjustedBy` | `String` | `sub` del administrador que hizo el ajuste. |
+| `adjustedAt` | `Instant` | Fecha de documento y de creación del movimiento que genera. |
+
+**Al registrarlo**, en la misma transacción se crea un `StockMovement` `ADJUSTMENT_IN` o `ADJUSTMENT_OUT` con `source` = este ajuste, se hace `ProductStock.increase(q)` o `ProductStock.decrease(q)` y se genera una alerta `STOCK_ADJUSTMENT`. Solo el administrador puede registrarlo.
+
+**Invariantes**: `reason` no vacío; inmutable una vez creado; un ajuste `OUT` respeta `decrease(q)`, y si no alcanza el disponible se rechaza sin cambiar nada. Como `documentDate` y `createdAt` coinciden, el movimiento nunca es `unusual`: el control es la alerta de cada ajuste.
+
 #### `StockReservation` — Reserva de stock (raíz de agregado)
 
 Detalle de lo bloqueado para un pedido. Permite liberar o consumir exactamente lo reservado y da idempotencia a la saga.
@@ -194,7 +214,7 @@ ACTIVE   → CONSUMED    (OrderProcessed → ProductStock.consume + StockMovemen
 Correspondencia con `OrderStatus` en Órdenes: reserva `PENDING` ↔ pedido `PENDING`; `ACTIVE` ↔ `RESERVED`; `CONSUMED` ↔ `PROCESSED` en adelante.
 
 * Al consumir `OrderRegistered`: si **todos** los ítems tienen `availableStock()` suficiente, la reserva se crea en `ACTIVE`, se hace `reserve` en cada `ProductStock` y se publica `StockReserved`. Si falta alguno, se crea en `PENDING` sin bloquear nada, se genera la alerta de stock insuficiente y se publica `StockInsufficient` indicando qué ítems faltan (todo o nada).
-* **Reintento de `PENDING`**: cuando un ingreso (`DeliveryNote`, devolución o reposición por cancelación) aumenta el stock de un producto, se reintentan las reservas `PENDING` que lo incluyen, en orden de llegada (FIFO). Si ahora alcanza para todos sus ítems, la reserva pasa a `ACTIVE` y se publica `StockReserved`, y Órdenes pasa el pedido de `PENDING` a `RESERVED`.
+* **Reintento de `PENDING`**: cuando un ingreso (`DeliveryNote`, devolución, reposición por cancelación o ajuste de entrada) aumenta el stock de un producto, se reintentan las reservas `PENDING` que lo incluyen, en orden de llegada (FIFO). Si ahora alcanza para todos sus ítems, la reserva pasa a `ACTIVE` y se publica `StockReserved`, y Órdenes pasa el pedido de `PENDING` a `RESERVED`.
 * **Cancelación de un pedido ya procesado** (`OrderCancelled` con el pedido en `PROCESSED`): la reserva ya está `CONSUMED`, así que no se libera nada. Se repone el stock real con un `StockMovement` `CANCELLATION` por ítem + `ProductStock.increase`.
 
 #### `Alert` — Alerta (raíz de agregado)
@@ -202,7 +222,7 @@ Correspondencia con `OrderStatus` en Órdenes: reserva `PENDING` ↔ pedido `PEN
 | Campo | Tipo | Notas |
 |---|---|---|
 | `id` | `AlertId` | |
-| `type` | `AlertType` | `MINIMUM_STOCK`, `UNUSUAL_MOVEMENT`, `INSUFFICIENT_STOCK`, `SYNC_FAILURE`. |
+| `type` | `AlertType` | `MINIMUM_STOCK`, `UNUSUAL_MOVEMENT`, `INSUFFICIENT_STOCK`, `SYNC_FAILURE`, `STOCK_ADJUSTMENT`. |
 | `reference` | `String` | Qué la originó: `productId`, `stockMovementId` u `orderId`, según el tipo. |
 | `message` | `String` | |
 | `status` | `AlertStatus` | `ACTIVE` → `ACKNOWLEDGED` (el administrador la vio) → `RESOLVED`. |
@@ -214,10 +234,11 @@ Se exponen por el endpoint de "alertas activas" de Inventario (`docs/README.md` 
 * `UNUSUAL_MOVEMENT`: una por cada `StockMovement` con `unusual = true`.
 * `INSUFFICIENT_STOCK`: una por cada reserva que queda en `PENDING`.
 * `SYNC_FAILURE`: fallos de sincronización CQRS (`docs/README.md` 3.1). Lleva el `productId` afectado (si lo hay) y la referencia al evento en la DLQ. Plazo de resolución: 24 h; se resuelve tras reprocesar el evento y reconstruir la proyección del producto.
+* `STOCK_ADJUSTMENT`: una por cada `StockAdjustment`, porque un ajuste es la vía con la que se podría encubrir un robo o una pérdida.
 
 ### Relaciones entre agregados
 
-Todos se referencian solo por id. `ProductStock`, `StockMovement`, `DeliveryNote`, `StockTransfer` y `StockReservation` referencian `Product` (Catálogo) por `productId`. `StockMovement` y `StockTransfer` referencian `Location` por id. `StockMovement.source` apunta al agregado que lo originó.
+Todos se referencian solo por id. `ProductStock`, `StockMovement`, `DeliveryNote`, `StockTransfer`, `StockAdjustment` y `StockReservation` referencian `Product` (Catálogo) por `productId`. `StockMovement` y `StockTransfer` referencian `Location` por id. `StockMovement.source` apunta al agregado que lo originó.
 
 Varios agregados cambian en una misma transacción (ej. `DeliveryNote` + `StockMovement` + `ProductStock`). Se acepta por pragmatismo: comparten la BD de escritura y la consistencia inmediata del stock es un requisito de negocio. `ProductStock` usa bloqueo optimista para resolver la concurrencia.
 
@@ -226,6 +247,7 @@ Varios agregados cambian en una misma transacción (ej. `DeliveryNote` + `StockM
 * **Ingresos**: `RegisterDeliveryNote`, `GetDeliveryNote`, `ListDeliveryNotes`.
 * **Ubicaciones**: `CreateLocation`, `UpdateLocation`, `ActivateLocation`, `DeactivateLocation`, `ListLocations` (como árbol).
 * **Traslados**: `TransferStock` (también cubre "asignar ubicación", con `fromLocationId` vacío).
+* **Ajustes**: `AdjustStock` (solo administrador), `GetStockAdjustment`, `ListStockAdjustments`.
 * **Reservas (disparados por eventos de Órdenes)**: `ReserveStockForOrder` (← `OrderRegistered`), `ConsumeReservation` (← `OrderProcessed`), `HandleOrderCancellation` (← `OrderCancelled`: libera la reserva si el pedido no estaba procesado, o repone el stock real con un `CANCELLATION` si ya lo estaba), `RestockReturnedOrder` (← `OrderReturned`: `StockMovement` `RETURN` + `ProductStock.increase`), `RetryPendingReservations` (interno, tras cada ingreso).
 * **Alertas**: `AcknowledgeAlert`, `ResolveAlert`, `ListActiveAlerts`.
 * **Consultas (lado lectura)**: `GetProductStock`, `GetKardex` (por producto y rango de fechas, con filtro opcional por ubicación).
@@ -237,6 +259,8 @@ Varios agregados cambian en una misma transacción (ej. `DeliveryNote` + `StockM
 **Publicados a Órdenes (saga)**: `StockReserved`, `StockInsufficient`.
 
 **Publicados para el lado lectura (CQRS, vía outbox + Debezium)**: `StockMovementRecorded`, `ProductStockChanged`, `DeliveryNoteRegistered`, `StockTransferred`, `AlertRaised`, `AlertStatusChanged`, `LocationChanged`.
+
+Un ajuste no agrega eventos: el kardex y el saldo se proyectan con `StockMovementRecorded` y `ProductStockChanged`, y la alerta con `AlertRaised`.
 
 **Clave de partición (decidido 2026-11-01)**: `StockMovementRecorded` y `ProductStockChanged` se publican con **`productId` como clave** del mensaje de Kafka, no con el id de su agregado. Así todos los eventos de un mismo producto caen en la misma partición y el lado de lectura los aplica en el orden en que se confirmaron, que es lo que necesita el saldo acumulado de `KardexEntry`. Los demás eventos usan el id de su agregado. Ver `docs/README.md` 3.1.
 

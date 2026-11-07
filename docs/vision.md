@@ -20,7 +20,7 @@ Un sistema de gestión de inventario basado en microservicios que sea:
 * Inventario: guías de remisión, ubicaciones, traslados, kardex, bloqueo/liberación de stock.
 * Pedidos: registro, verificación asíncrona de stock, procesamiento, envío, entrega, cancelación (automática a 48h o manual), devolución.
 * Notificaciones al cliente (SMS/email) ante cambios de estado del pedido.
-* Alertas operativas para el administrador: stock mínimo, movimiento inusual, stock insuficiente, pedido cancelado, fallo de sincronización.
+* Alertas operativas para el administrador: stock mínimo, movimiento inusual, stock insuficiente, pedido cancelado, fallo de sincronización, ajuste de stock.
 * Seguridad (Keycloak/OAuth2), trazabilidad (OpenTelemetry), logs centralizados, métricas (Prometheus/Grafana), resiliencia (circuit breaker, retries, DLQ), testing (Testcontainers, ArchUnit, contract tests), CI (GitHub Actions) y despliegue (Docker Compose, Kubernetes local).
 
 ### No incluye (por ahora)

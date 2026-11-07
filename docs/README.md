@@ -6,6 +6,7 @@ El siguiente proyecto es un sistema de gestión de inventario y reportes de kard
 ## 2. Requisitos de Usuario
 * Registrar guías de remisión: todo ingreso debe estar asociado a un documento de compra, pudiendo ser de cualquier tipo. Actualmente se soportan boleta, factura y orden de compra, pero el tipo de documento debe quedar abierto a futuros tipos.
 * Asignar ubicación a los productos ingresados.
+* Ajustar el stock: el administrador puede corregir un error de registro o una diferencia de conteo físico con un ajuste de entrada o de salida, con motivo obligatorio. Un movimiento del kardex nunca se edita ni se borra; cada ajuste queda registrado con su autor y genera una alerta. Un ajuste de salida no puede dejar el stock real por debajo del stock reservado.
 * Registrar pedidos: el pedido se registra siempre, independientemente de si hay stock disponible. Si hay stock disponible (stock real − stock reservado) para **todos** sus ítems, se bloquea (reserva) el inventario correspondiente; si falta stock de algún ítem, no se bloquea nada (todo o nada), el pedido queda **pendiente** y se genera una alerta de stock faltante. Un pedido pendiente no se puede procesar hasta que su stock quede reservado.
 * Si el pedido no se ha procesado en 48 horas desde su registro (ya sea por falta de stock o cualquier otro motivo), este se cancela automáticamente y se libera el stock bloqueado, si lo hubiera.
 * El pedido sigue un ciclo de vida con estados definidos (ver 2.1 Máquina de estados del pedido), que incluye procesarlo, enviarlo, entregarlo y, de corresponder, cancelarlo o aceptar una devolución.
@@ -15,6 +16,7 @@ El siguiente proyecto es un sistema de gestión de inventario y reportes de kard
     * Pedido cancelado.
     * Solicitud de pedido de artículo sin stock.
     * Registro de entradas o salidas inusuales (ver 2.2 Criterio de movimiento inusual).
+    * Ajuste de stock.
 
 ### 2.1 Máquina de estados del pedido
 
@@ -96,7 +98,7 @@ Como el pedido se registra siempre, haya o no stock (sección 2), la verificaci�
 2. **Inventario** consume `PedidoRegistrado` e intenta reservar el stock (todo o nada, sobre el stock disponible):
    * Hay stock disponible para todos los ítems → lo reserva y publica `StockReservado`.
    * Falta stock de algún ítem → no reserva nada, deja la reserva en espera, dispara la alerta "solicitud de pedido sin stock" y publica `StockInsuficiente`.
-   * Cuando ingresa stock (guía de remisión, devolución o reposición por cancelación), reintenta las reservas en espera en orden de llegada; si ahora alcanza, publica `StockReservado`.
+   * Cuando ingresa stock (guía de remisión, devolución, reposición por cancelación o ajuste de entrada), reintenta las reservas en espera en orden de llegada; si ahora alcanza, publica `StockReservado`.
 3. **Órdenes** consume el resultado: `StockReservado` → pasa a `RESERVADO` (desde `REGISTRADO` o `PENDIENTE`) y publica `PedidoReservado`; `StockInsuficiente` → pasa a `PENDIENTE` y publica `PedidoPendiente`.
 4. El pedido se **procesa** como paso explícito (solo desde `RESERVADO`): Órdenes pasa a `PROCESADO` y publica `PedidoProcesado`; Inventario lo consume y descuenta el stock real y el reservado (salida en el kardex).
 5. El scheduler de 48h (en Órdenes) cancela los pedidos sin procesar (`REGISTRADO`, `PENDIENTE`, `RESERVADO`) y publica `PedidoCancelado`; Inventario libera la reserva si la había. Si la cancelación es manual desde `PROCESADO`, Inventario repone el stock real. Ante `PedidoDevuelto`, Inventario repone el stock real.
@@ -105,7 +107,7 @@ Como el pedido se registra siempre, haya o no stock (sección 2), la verificaci�
 ### 4.3 Alertas y registro de incidencias
 
 * El **registro de incidencias** (cancelaciones/devoluciones con motivo) vive dentro de **Órdenes**, que es quien controla el ciclo de vida del pedido.
-* Las **alertas operativas** (stock mínimo, movimiento inusual, stock insuficiente, pedido cancelado, fallo de sincronización) no requieren un microservicio propio: cada servicio que las origina (Inventario u Órdenes) expone su propio endpoint de "alertas activas" como parte de su API de consultas.
+* Las **alertas operativas** (stock mínimo, movimiento inusual, stock insuficiente, pedido cancelado, fallo de sincronización, ajuste de stock) no requieren un microservicio propio: cada servicio que las origina (Inventario u Órdenes) expone su propio endpoint de "alertas activas" como parte de su API de consultas.
 * El **panel de alertas urgentes del administrador** (frontend, a futuro) combina esas dos fuentes llamando a ambos endpoints — no hay un agregador backend dedicado. Con solo dos fuentes hoy, agregar un microservicio de Alertas solo para esto no se justifica; si en el futuro se suman más fuentes (ej. Catálogo, Notificaciones), se puede reconsiderar un agregador dedicado.
 
 ### 4.4 Diagrama general

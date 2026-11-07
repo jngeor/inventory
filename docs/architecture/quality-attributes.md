@@ -151,8 +151,8 @@ Escenarios de calidad medibles para validar que la arquitectura cumple lo que pr
 | Estímulo | Registra un movimiento cuya fecha de documento difiere en más de **48 h** de su fecha de creación (README 2.2). |
 | Artefacto | Dominio de Inventario (`StockMovement.unusual`, `Alert` `UNUSUAL_MOVEMENT`). |
 | Entorno | Operación normal. |
-| Respuesta | El movimiento se registra marcado como inusual y se genera una alerta. El movimiento no se puede editar ni borrar: solo se corrige con un movimiento compensatorio. |
-| Medida | **100 %** de los movimientos fuera del umbral quedan marcados, con **0** falsos negativos en los tests de borde (47 h 59 min, 48 h, 48 h 1 min, en ambas direcciones). La alerta es visible en el panel en menos de **5 s**. **0** endpoints que permitan modificar o eliminar movimientos. |
+| Respuesta | El movimiento se registra marcado como inusual y se genera una alerta. El movimiento no se puede editar ni borrar: solo se corrige con un ajuste de stock (`AdjustStock`), que exige motivo, guarda su autor y genera una alerta `STOCK_ADJUSTMENT`. |
+| Medida | **100 %** de los movimientos fuera del umbral quedan marcados, con **0** falsos negativos en los tests de borde (47 h 59 min, 48 h, 48 h 1 min, en ambas direcciones). La alerta es visible en el panel en menos de **5 s**. **0** endpoints que permitan modificar o eliminar movimientos. **100 %** de los ajustes con motivo, autor y alerta. |
 | Verificación | Tests unitarios del dominio para los bordes, más un test de arquitectura o de API que verifique que no hay operaciones de actualización o borrado sobre `StockMovement`. |
 
 ## 6. Observabilidad

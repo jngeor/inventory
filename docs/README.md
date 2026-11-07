@@ -6,6 +6,7 @@ El siguiente proyecto es un sistema de gestión de inventario y reportes de kard
 ## 2. Requisitos de Usuario
 * Registrar guías de remisión: todo ingreso debe estar asociado a un documento de compra, pudiendo ser de cualquier tipo. Actualmente se soportan boleta, factura y orden de compra, pero el tipo de documento debe quedar abierto a futuros tipos.
 * Asignar ubicación a los productos ingresados.
+* Ajustar el stock: el administrador puede corregir un error de registro o una diferencia de conteo físico con un ajuste de entrada o de salida, con motivo obligatorio. Un movimiento del kardex nunca se edita ni se borra; cada ajuste queda registrado con su autor y genera una alerta. Un ajuste de salida no puede dejar el stock real por debajo del stock reservado.
 * Registrar pedidos: el pedido se registra siempre, independientemente de si hay stock disponible. Si hay stock disponible (stock real − stock reservado) para **todos** sus ítems, se bloquea (reserva) el inventario correspondiente; si falta stock de algún ítem, no se bloquea nada (todo o nada), el pedido queda **pendiente** y se genera una alerta de stock faltante. Un pedido pendiente no se puede procesar hasta que su stock quede reservado.
 * Si el pedido no se ha procesado en 48 horas desde su registro (ya sea por falta de stock o cualquier otro motivo), este se cancela automáticamente y se libera el stock bloqueado, si lo hubiera.
 * El pedido sigue un ciclo de vida con estados definidos (ver 2.1 Máquina de estados del pedido), que incluye procesarlo, enviarlo, entregarlo y, de corresponder, cancelarlo o aceptar una devolución.
@@ -15,6 +16,7 @@ El siguiente proyecto es un sistema de gestión de inventario y reportes de kard
     * Pedido cancelado.
     * Solicitud de pedido de artículo sin stock.
     * Registro de entradas o salidas inusuales (ver 2.2 Criterio de movimiento inusual).
+    * Ajuste de stock.
 
 ### 2.1 Máquina de estados del pedido
 
@@ -66,8 +68,13 @@ Aplica íntegramente dentro del microservicio **Inventario** (ver 4.1). Los dem�
 
 * **Lado escritura (dentro de Inventario)**: expone los comandos, escribe en la BD de escritura y, en la misma transacción, graba el evento en una tabla outbox (patrón Outbox), evitando el problema de doble escritura entre BD y cola.
 * **Relay vía CDC (Debezium)**: en vez de un relay por polling, se usa **Debezium** leyendo el log de transacciones de la BD de escritura (WAL/binlog), con el **Outbox Event Router** de Debezium publicando directo a Kafka (vía Kafka Connect). Esto evita la carga de polling sobre la BD y los problemas de concurrencia de un poller con múltiples instancias (`SELECT ... FOR UPDATE SKIP LOCKED`). Se eligió sobre polling por la latencia más baja y porque Debezium ya tiene soporte nativo para el patrón Outbox. Requiere habilitar replicación lógica en la BD de escritura y desplegar Kafka Connect junto al resto del stack. Se mantiene una tabla/log de idempotencia (por ID único de evento) del lado del consumidor para garantizar que un mismo evento no se aplique dos veces.
-* **Lado lectura (dentro de Inventario)**: consume los eventos de Kafka y actualiza la BD de lectura, validando idempotencia antes de aplicar cada evento.
+* **Lado lectura (dentro de Inventario)**: consume los eventos de Kafka y actualiza la BD de lectura, validando idempotencia antes de aplicar cada evento. Los eventos que afectan el stock o el kardex de un producto (`StockMovementRecorded`, `ProductStockChanged`) se publican con **`productId` como clave** del mensaje (decidido 2026-11-01). Así Kafka garantiza su orden por producto y el saldo acumulado del kardex se calcula bien. La fila del outbox lleva esa clave en una columna propia, que el Outbox Event Router usa como clave del mensaje (`table.field.event.key`), separada de `aggregateid`. El proyector procesa cada partición en secuencia, sin paralelismo dentro de ella. La BD de lectura es **MongoDB** (decidido 2026-11-01): los modelos de lectura se guardan como documentos listos para consultar, y el log de idempotencia vive en la misma BD. Las BD de escritura de todos los servicios son **PostgreSQL**.
 * **Fallos de sincronización**: si Debezium/Kafka Connect no logra publicar un evento, o el lado de lectura no logra aplicarlo, se registra en un log de fallos de sincronización (dead-letter / DLQ de Kafka) y se dispara una alerta, para permitir revisión y reintento manual. Este log es de naturaleza técnica/infraestructura, distinto del registro de incidencias de negocio (sección 2).
+* **Movimiento de stock en la DLQ: dejar pasar y marcar** (decidido 2026-11-01). Si un evento de un producto no se puede aplicar en la BD de lectura y va a la DLQ, **no se detiene la proyección**: los eventos siguientes de ese producto se siguen aplicando, porque detenerla congelaría el producto y puede causar un problema mayor. A cambio:
+  * El `ProductStockView` y el kardex de ese producto quedan **marcados como desincronizados** (`outOfSync`), y la API de consultas lo informa en la respuesta para que nadie confíe en un saldo que puede estar mal.
+  * Se genera la alerta `SYNC_FAILURE` con el `productId` y el evento fallido.
+  * **Una persona monitorea estas alertas, y cada una debe resolverse en un máximo de 24 horas.** Si una alerta `SYNC_FAILURE` sigue sin resolver a las 20 horas (valor configurable), contando `ACTIVE` y `ACKNOWLEDGED`, se dispara una alerta de escalamiento en Grafana que se envía por correo al responsable, hoy la misma persona que monitorea. Para eso, Inventario publica en Prometheus la antigüedad de la `SYNC_FAILURE` sin resolver más antigua, leída de la BD de escritura (ADR-0009). El plazo se cuenta en horas corridas, sin horario laboral.
+  * **Resolver** significa corregir la causa, reprocesar el evento desde la DLQ y **reconstruir la proyección de ese producto** a partir de la BD de escritura, que es la fuente de verdad. La reconstrucción recalcula todo el kardex y el saldo del producto y quita la marca `outOfSync`. Es una operación administrativa por producto, idempotente, y no afecta a los demás productos.
 
 
 ## 4. Arquitectura
@@ -77,7 +84,7 @@ Aplica íntegramente dentro del microservicio **Inventario** (ver 4.1). Los dem�
 | Microservicio | Responsabilidad | Persistencia |
 |---|---|---|
 | **Catálogo** | Maestro de productos: SKU, nombre, categoría, unidad de medida, stock mínimo configurado. | BD única (CRUD). |
-| **Inventario** | Guías de remisión, ubicaciones, traslados, kardex, bloqueo/liberación de stock, alertas de stock mínimo / movimiento inusual / stock insuficiente. | CQRS: BD escritura + BD lectura + outbox + relay (ver 3.1), por los reportes de kardex. |
+| **Inventario** | Guías de remisión, ubicaciones, traslados, kardex, bloqueo/liberación de stock, alertas de stock mínimo / movimiento inusual / stock insuficiente. | CQRS: BD escritura (PostgreSQL) + BD lectura (MongoDB) + outbox + relay (ver 3.1), por los reportes de kardex. |
 | **Órdenes** | Máquina de estados del pedido (2.1), scheduler de 48h, registro de incidencias (cancelaciones/devoluciones con motivo). | BD única + tabla outbox (para publicar eventos de pedido de forma confiable). |
 | **Notificaciones** | Consume cambios de estado del pedido y notifica al cliente por SMS/email. | BD pequeña: registro de notificaciones enviadas (idempotencia y auditoría). |
 
@@ -91,7 +98,7 @@ Como el pedido se registra siempre, haya o no stock (sección 2), la verificaci�
 2. **Inventario** consume `PedidoRegistrado` e intenta reservar el stock (todo o nada, sobre el stock disponible):
    * Hay stock disponible para todos los ítems → lo reserva y publica `StockReservado`.
    * Falta stock de algún ítem → no reserva nada, deja la reserva en espera, dispara la alerta "solicitud de pedido sin stock" y publica `StockInsuficiente`.
-   * Cuando ingresa stock (guía de remisión o devolución), reintenta las reservas en espera en orden de llegada; si ahora alcanza, publica `StockReservado`.
+   * Cuando ingresa stock (guía de remisión, devolución, reposición por cancelación o ajuste de entrada), reintenta las reservas en espera en orden de llegada; si ahora alcanza, publica `StockReservado`.
 3. **Órdenes** consume el resultado: `StockReservado` → pasa a `RESERVADO` (desde `REGISTRADO` o `PENDIENTE`) y publica `PedidoReservado`; `StockInsuficiente` → pasa a `PENDIENTE` y publica `PedidoPendiente`.
 4. El pedido se **procesa** como paso explícito (solo desde `RESERVADO`): Órdenes pasa a `PROCESADO` y publica `PedidoProcesado`; Inventario lo consume y descuenta el stock real y el reservado (salida en el kardex).
 5. El scheduler de 48h (en Órdenes) cancela los pedidos sin procesar (`REGISTRADO`, `PENDIENTE`, `RESERVADO`) y publica `PedidoCancelado`; Inventario libera la reserva si la había. Si la cancelación es manual desde `PROCESADO`, Inventario repone el stock real. Ante `PedidoDevuelto`, Inventario repone el stock real.
@@ -100,7 +107,7 @@ Como el pedido se registra siempre, haya o no stock (sección 2), la verificaci�
 ### 4.3 Alertas y registro de incidencias
 
 * El **registro de incidencias** (cancelaciones/devoluciones con motivo) vive dentro de **Órdenes**, que es quien controla el ciclo de vida del pedido.
-* Las **alertas operativas** (stock mínimo, movimiento inusual, stock insuficiente, pedido cancelado, fallo de sincronización) no requieren un microservicio propio: cada servicio que las origina (Inventario u Órdenes) expone su propio endpoint de "alertas activas" como parte de su API de consultas.
+* Las **alertas operativas** (stock mínimo, movimiento inusual, stock insuficiente, pedido cancelado, fallo de sincronización, ajuste de stock) no requieren un microservicio propio: cada servicio que las origina (Inventario u Órdenes) expone su propio endpoint de "alertas activas" como parte de su API de consultas.
 * El **panel de alertas urgentes del administrador** (frontend, a futuro) combina esas dos fuentes llamando a ambos endpoints — no hay un agregador backend dedicado. Con solo dos fuentes hoy, agregar un microservicio de Alertas solo para esto no se justifica; si en el futuro se suman más fuentes (ej. Catálogo, Notificaciones), se puede reconsiderar un agregador dedicado.
 
 ### 4.4 Diagrama general
@@ -108,7 +115,7 @@ Como el pedido se registra siempre, haya o no stock (sección 2), la verificaci�
 ```mermaid
 flowchart TB
     Cliente[Cliente]
-    GW["API Gateway / Ingress"]
+    GW["API Gateway (Spring Cloud Gateway)"]
     KC[("Keycloak<br/>OAuth2 / OIDC")]
     KAFKA{{"Kafka"}}
 
@@ -185,8 +192,8 @@ Aplica a los cuatro microservicios.
 | Aspecto | Tecnología | Notas |
 |---|---|---|
 | Seguridad | Keycloak (OAuth2/OIDC) | Cada microservicio actúa como resource server; autorización por roles. |
-| Trazabilidad | OpenTelemetry → Jaeger o Tempo | El traceId se propaga también a través de los headers de los mensajes de Kafka, no solo en llamadas HTTP síncronas. |
-| Logs | JSON estructurado con traceId → Loki o ELK | Permite correlacionar logs entre microservicios usando el mismo traceId de OpenTelemetry. |
+| Trazabilidad | OpenTelemetry → Tempo | El traceId se propaga también a través de los headers de los mensajes de Kafka, no solo en llamadas HTTP síncronas. |
+| Logs | JSON estructurado con traceId → Loki | Permite correlacionar logs entre microservicios usando el mismo traceId de OpenTelemetry. |
 | Métricas | Prometheus + Grafana | Dashboard versionado en el repo; también soporta las alertas operativas (ver 4.3). |
 | Resiliencia | Resilience4j (circuit breaker + retry + timeout) en llamadas síncronas y a proveedores externos; reintentos acotados + DLQ en Kafka para los consumidores de eventos. | **Ningún reintento es infinito** — ver 5.1. |
 | Tests | Testcontainers (BD/Kafka reales en tests), tests de contrato entre microservicios, ArchUnit (reglas de arquitectura hexagonal). | |

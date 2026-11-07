@@ -37,7 +37,8 @@ Convención: la documentación de negocio (README, vision.md) se escribe en **es
 | Saldo de stock de un producto | `ProductStock` |
 | Reserva de stock de un pedido | `StockReservation` |
 | Traslado entre ubicaciones | `StockTransfer` |
-| Tipo de movimiento de kardex | `MovementType` (`INBOUND`, `OUTBOUND`, `RETURN`, `CANCELLATION`, `TRANSFER_OUT`, `TRANSFER_IN`) |
+| Ajuste de stock (corrección de un error o de un conteo físico) | `StockAdjustment` |
+| Tipo de movimiento de kardex | `MovementType` (`INBOUND`, `OUTBOUND`, `RETURN`, `CANCELLATION`, `TRANSFER_OUT`, `TRANSFER_IN`, `ADJUSTMENT_IN`, `ADJUSTMENT_OUT`) |
 
 ## Estados del pedido (`OrderStatus`)
 

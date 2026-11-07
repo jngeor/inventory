@@ -262,11 +262,13 @@ Varios agregados cambian en una misma transacción (ej. `DeliveryNote` + `StockM
 
 Un ajuste no agrega eventos: el kardex y el saldo se proyectan con `StockMovementRecorded` y `ProductStockChanged`, y la alerta con `AlertRaised`.
 
+**Contenido para una proyección idempotente (decidido 2026-11-07, ADR-0007)**: `ProductStockChanged` lleva los valores absolutos de `physicalStock` y `reservedStock`, no diferencias. `StockMovementRecorded` lleva el saldo acumulado del producto después del movimiento, calculado en el lado de escritura. Así, aplicar dos veces el mismo evento no altera el resultado.
+
 **Clave de partición (decidido 2026-11-01)**: `StockMovementRecorded` y `ProductStockChanged` se publican con **`productId` como clave** del mensaje de Kafka, no con el id de su agregado. Así todos los eventos de un mismo producto caen en la misma partición y el lado de lectura los aplica en el orden en que se confirmaron, que es lo que necesita el saldo acumulado de `KardexEntry`. Los demás eventos usan el id de su agregado. Ver `docs/README.md` 3.1.
 
 ### Modelos de lectura (BD de lectura, MongoDB)
 
-* **`KardexEntry`**: una fila por `StockMovement`, con su **saldo acumulado** por producto (y por ubicación cuando la hay). Es la base de los reportes de kardex.
+* **`KardexEntry`**: una fila por `StockMovement`, con su **saldo acumulado** por producto. El saldo acumulado por ubicación queda fuera del alcance por ahora. Es la base de los reportes de kardex.
 * **`ProductStockView`**: stock real, reservado y disponible por producto, con el desglose referencial por ubicación. Lleva `outOfSync` (+ `outOfSyncSince`): `true` cuando un evento de ese producto terminó en la DLQ; mientras esté así, las consultas de stock y de kardex del producto lo informan (`docs/README.md` 3.1).
 
 **Reconstrucción por producto**: `RebuildProductProjection(productId)` (administrativo) borra y vuelve a generar el `ProductStockView` y los `KardexEntry` de un producto desde la BD de escritura, y quita la marca `outOfSync`. Es idempotente. Se usa para resolver un `SYNC_FAILURE` en el plazo de 24 h.

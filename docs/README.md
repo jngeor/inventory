@@ -73,7 +73,7 @@ Aplica íntegramente dentro del microservicio **Inventario** (ver 4.1). Los dem�
 * **Movimiento de stock en la DLQ: dejar pasar y marcar** (decidido 2026-11-01). Si un evento de un producto no se puede aplicar en la BD de lectura y va a la DLQ, **no se detiene la proyección**: los eventos siguientes de ese producto se siguen aplicando, porque detenerla congelaría el producto y puede causar un problema mayor. A cambio:
   * El `ProductStockView` y el kardex de ese producto quedan **marcados como desincronizados** (`outOfSync`), y la API de consultas lo informa en la respuesta para que nadie confíe en un saldo que puede estar mal.
   * Se genera la alerta `SYNC_FAILURE` con el `productId` y el evento fallido.
-  * **Una persona monitorea estas alertas, y cada una debe resolverse en un máximo de 24 horas.** Si una alerta `SYNC_FAILURE` sigue activa a las 20 horas (valor configurable), se dispara una alerta de escalamiento en Grafana que se envía por correo al responsable, hoy la misma persona que monitorea. El plazo se cuenta en horas corridas, sin horario laboral.
+  * **Una persona monitorea estas alertas, y cada una debe resolverse en un máximo de 24 horas.** Si una alerta `SYNC_FAILURE` sigue sin resolver a las 20 horas (valor configurable), contando `ACTIVE` y `ACKNOWLEDGED`, se dispara una alerta de escalamiento en Grafana que se envía por correo al responsable, hoy la misma persona que monitorea. Para eso, Inventario publica en Prometheus la antigüedad de la `SYNC_FAILURE` sin resolver más antigua, leída de la BD de escritura (ADR-0009). El plazo se cuenta en horas corridas, sin horario laboral.
   * **Resolver** significa corregir la causa, reprocesar el evento desde la DLQ y **reconstruir la proyección de ese producto** a partir de la BD de escritura, que es la fuente de verdad. La reconstrucción recalcula todo el kardex y el saldo del producto y quita la marca `outOfSync`. Es una operación administrativa por producto, idempotente, y no afecta a los demás productos.
 
 
@@ -115,7 +115,7 @@ Como el pedido se registra siempre, haya o no stock (sección 2), la verificaci�
 ```mermaid
 flowchart TB
     Cliente[Cliente]
-    GW["API Gateway / Ingress"]
+    GW["API Gateway (Spring Cloud Gateway)"]
     KC[("Keycloak<br/>OAuth2 / OIDC")]
     KAFKA{{"Kafka"}}
 
@@ -192,8 +192,8 @@ Aplica a los cuatro microservicios.
 | Aspecto | Tecnología | Notas |
 |---|---|---|
 | Seguridad | Keycloak (OAuth2/OIDC) | Cada microservicio actúa como resource server; autorización por roles. |
-| Trazabilidad | OpenTelemetry → Jaeger o Tempo | El traceId se propaga también a través de los headers de los mensajes de Kafka, no solo en llamadas HTTP síncronas. |
-| Logs | JSON estructurado con traceId → Loki o ELK | Permite correlacionar logs entre microservicios usando el mismo traceId de OpenTelemetry. |
+| Trazabilidad | OpenTelemetry → Tempo | El traceId se propaga también a través de los headers de los mensajes de Kafka, no solo en llamadas HTTP síncronas. |
+| Logs | JSON estructurado con traceId → Loki | Permite correlacionar logs entre microservicios usando el mismo traceId de OpenTelemetry. |
 | Métricas | Prometheus + Grafana | Dashboard versionado en el repo; también soporta las alertas operativas (ver 4.3). |
 | Resiliencia | Resilience4j (circuit breaker + retry + timeout) en llamadas síncronas y a proveedores externos; reintentos acotados + DLQ en Kafka para los consumidores de eventos. | **Ningún reintento es infinito** — ver 5.1. |
 | Tests | Testcontainers (BD/Kafka reales en tests), tests de contrato entre microservicios, ArchUnit (reglas de arquitectura hexagonal). | |

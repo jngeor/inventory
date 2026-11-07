@@ -85,13 +85,13 @@ flowchart TB
     MAIL["<b>Mailpit</b><br/>[SMTP de pruebas]"]:::external
 
     subgraph SYS["Sistema de Gestión de Inventario"]
-        GW["<b>API Gateway / Ingress</b><br/>[Contenedor]<br/>Punto de entrada único, enruta por path"]:::internal
+        GW["<b>API Gateway</b><br/>[Spring Cloud Gateway]<br/>Punto de entrada único, enruta por path"]:::internal
 
         CAT["<b>Catálogo</b><br/>[Java 21, Spring Boot WebFlux]<br/>Productos, categorías, unidades"]:::internal
         CATDB[("<b>BD Catálogo</b><br/>[PostgreSQL]")]:::db
 
         INV["<b>Inventario</b><br/>[Java 21, Spring Boot WebFlux]<br/>Guías, ubicaciones, traslados,<br/>reservas, kardex, alertas · CQRS"]:::internal
-        INVW[("<b>BD Inventario escritura</b><br/>[PostgreSQL]<br/>+ outbox + replicación lógica")]:::db
+        INVW[("<b>BD Inventario escritura</b><br/>[PostgreSQL]<br/>+ outbox + ShedLock<br/>+ replicación lógica")]:::db
         INVR[("<b>BD Inventario lectura</b><br/>[MongoDB]<br/>kardex, stock, alertas activas")]:::db
 
         ORD["<b>Órdenes</b><br/>[Java 21, Spring Boot WebFlux]<br/>Ciclo de vida del pedido,<br/>expiración 48 h, incidencias, alertas"]:::internal
@@ -158,8 +158,8 @@ flowchart LR
     subgraph OBS["Stack de observabilidad"]
         direction TB
         OTEL["<b>OpenTelemetry Collector</b><br/>[Contenedor]<br/>recibe trazas y logs (OTLP)"]:::internal
-        TEMPO[("<b>Tempo (o Jaeger)</b><br/>trazas distribuidas")]:::db
-        LOKI[("<b>Loki (o ELK)</b><br/>logs centralizados")]:::db
+        TEMPO[("<b>Tempo</b><br/>trazas distribuidas")]:::db
+        LOKI[("<b>Loki</b><br/>logs centralizados")]:::db
         PROM[("<b>Prometheus</b><br/>métricas + reglas de alerta")]:::db
         GRAF["<b>Grafana</b><br/>[Contenedor]<br/>dashboards versionados en el repo"]:::internal
     end
@@ -189,7 +189,7 @@ flowchart LR
 
 | Contenedor | Tecnología | Responsabilidad | Datos |
 |---|---|---|---|
-| API Gateway / Ingress | Por decidir (ej. Spring Cloud Gateway o el Ingress de Kubernetes) | Punto de entrada único; enruta por path. La validación del token la hace cada servicio, no solo el gateway. | — |
+| API Gateway | Spring Cloud Gateway (ADR-0015) | Punto de entrada único; enruta por path. La validación del token la hace cada servicio, no solo el gateway. | — |
 | Catálogo | Java 21, Spring Boot, WebFlux | Maestro de productos, categorías y unidades de medida. No consume eventos ni llama a nadie. | BD Catálogo |
 | Inventario | Java 21, Spring Boot, WebFlux | Guías, ubicaciones, traslados, reservas, kardex, alertas. Único con CQRS. | BD escritura (PostgreSQL) + BD lectura (MongoDB) |
 | Órdenes | Java 21, Spring Boot, WebFlux | Ciclo de vida del pedido, expiración, incidencias, alertas `ORDER_CANCELLED`. | BD Órdenes |
@@ -201,8 +201,8 @@ flowchart LR
 | Keycloak | Keycloak | Identidad, tokens y roles. | Su propia BD (quinta base de la instancia compartida en desarrollo, aislada en certificación y producción; ADR-0003) |
 | Mailpit | Mailpit | SMTP de pruebas con interfaz web para ver los emails enviados. | — |
 | OpenTelemetry Collector | OTel Collector | Recibe trazas y logs por OTLP y los reenvía. | — |
-| Tempo (o Jaeger) | Grafana Tempo | Almacén de trazas. | Trazas |
-| Loki (o ELK) | Grafana Loki | Almacén de logs. | Logs |
+| Tempo | Grafana Tempo | Almacén de trazas. | Trazas |
+| Loki | Grafana Loki | Almacén de logs. | Logs |
 | Prometheus | Prometheus | Métricas y reglas de alerta. | Series de tiempo |
 | Grafana | Grafana | Dashboards versionados en el repo y alertas. | — |
 

@@ -139,7 +139,7 @@ Escenarios de calidad medibles para validar que la arquitectura cumple lo que pr
 | Estímulo | (a) Consulta o cancela un pedido de otro cliente. (b) Intenta procesar, enviar o entregar un pedido, registrar una guía de remisión o resolver una alerta. |
 | Artefacto | Autorización en Órdenes e Inventario (roles de Keycloak + `customerId` = `sub`). |
 | Entorno | Operación normal. |
-| Respuesta | (a) Se responde 404, como si el pedido no existiera, para no revelar qué ids existen. (b) Se responde 403. En ambos casos queda un registro de auditoría con el `sub` y el `traceId`. |
+| Respuesta | (a) Se responde 404, como si el pedido no existiera, para no revelar qué ids existen. (b) Se responde 403. En ambos casos queda un registro de auditoría en los logs, con un campo que lo identifica, el `sub` y el `traceId`; se conserva lo que dure la retención de logs (ADR-0013). |
 | Medida | **100 %** de los intentos bloqueados y **0** cambios de estado. Los casos (a) y (b) están cubiertos por tests en cada caso de uso que recibe un `orderId` o requiere el rol de administrador. |
 | Verificación | Tests de integración con tokens de prueba de dos clientes y un administrador (Keycloak en Testcontainers). |
 
@@ -165,9 +165,9 @@ Escenarios de calidad medibles para validar que la arquitectura cumple lo que pr
 | Estímulo | Un pedido lleva más de 10 minutos en `REGISTERED` y se quiere saber por qué. |
 | Artefacto | OpenTelemetry (trazas), logs JSON, métricas (README 5). |
 | Entorno | Operación normal o degradada. |
-| Respuesta | A partir del `orderId` se encuentra el `traceId` y se ve la traza completa: petición HTTP → Órdenes → outbox → Debezium → Kafka → Inventario → Kafka → Órdenes. Esa traza muestra en qué salto se detuvo y los logs de ese salto, filtrados por el mismo `traceId`. |
+| Respuesta | A partir del `orderId` se encuentra el `traceId` y se ve la traza completa: petición HTTP → Órdenes → Inventario → Órdenes. Debezium y Kafka no aparecen como pasos propios, sino como el tiempo entre la escritura en el outbox y el consumo del evento (ADR-0014). Esa traza muestra en qué salto se detuvo y los logs de ese salto, filtrados por el mismo `traceId`. Si la traza termina en la escritura del outbox, se revisa el conector (D3). |
 | Medida | **100 %** de los logs de negocio en JSON con `traceId`. La traza conserva su continuidad en los saltos asíncronos (Kafka), es decir, una sola traza por flujo y no una por servicio. Todas las trazas de un pedido se encuentran por `orderId`, porque procesar, enviar y entregar son flujos separados. El punto de falla se localiza en menos de **5 minutos** sin acceder a las BD ni a los contenedores. |
-| Verificación | Revisión guiada con un fallo inyectado (por ejemplo, el consumidor de Inventario detenido), más un test automatizado que verifique que el header `traceparent` viaja en los mensajes de Kafka. |
+| Verificación | Revisión guiada con un fallo inyectado (por ejemplo, el consumidor de Inventario detenido), más un test automatizado de punta a punta que verifique que el header `traceparent` del mensaje en Kafka lleva el mismo `traceId` de la petición HTTP que lo originó. |
 
 ### O2. Un mensaje termina en la DLQ (A)
 

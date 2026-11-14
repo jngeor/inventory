@@ -1,0 +1,1155 @@
+openapi: 3.1.0
+info:
+  title: API de Inventario
+  version: 1.0.0
+  description: >-
+    Guías de remisión, ubicaciones, traslados, ajustes, alertas y consultas de
+    stock y kardex. Las reservas se manejan por eventos y no se exponen aquí.
+    Los roles de cada operación están en la extensión x-roles. Convenciones en
+    docs/api/README.md.
+servers:
+  - url: /api/v1/inventory
+security:
+  - bearerAuth: []
+tags:
+  - name: DeliveryNotes
+    description: Guías de remisión. Son la entrada de mercadería.
+  - name: Locations
+    description: Ubicaciones referenciales, con jerarquía opcional.
+  - name: StockTransfers
+    description: Traslados entre ubicaciones.
+  - name: StockAdjustments
+    description: Correcciones de stock.
+  - name: Stock
+    description: Consultas del lado de lectura.
+  - name: Alerts
+    description: Alertas de Inventario.
+
+paths:
+  /delivery-notes:
+    get:
+      operationId: listDeliveryNotes
+      summary: Listar guías de remisión
+      tags: [DeliveryNotes]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: productId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: fromDate
+          in: query
+          description: Fecha de emisión desde.
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          description: Fecha de emisión hasta.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Página de guías.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryNotePage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+    post:
+      operationId: registerDeliveryNote
+      summary: Registrar una guía de remisión
+      description: >-
+        Aumenta el stock al registrarse y genera un movimiento INBOUND por
+        ítem. La guía no se puede modificar después.
+      tags: [DeliveryNotes]
+      x-roles: [ADMIN, OPERATOR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeliveryNoteRequest'
+      responses:
+        '201':
+          description: Guía registrada.
+          headers:
+            Location:
+              $ref: 'common.yaml#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryNote'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '409':
+          description: >-
+            La serie y el número ya existen (DELIVERY_NOTE_ALREADY_EXISTS), o
+            un producto no existe o está inactivo (DELIVERY_NOTE_INVALID_PRODUCT).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+        '503':
+          $ref: 'common.yaml#/components/responses/ServiceUnavailable'
+
+  /delivery-notes/{deliveryNoteId}:
+    get:
+      operationId: getDeliveryNote
+      summary: Consultar una guía de remisión
+      tags: [DeliveryNotes]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - name: deliveryNoteId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Guía de remisión.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryNote'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /locations:
+    get:
+      operationId: listLocations
+      summary: Listar ubicaciones
+      description: >-
+        Devuelve una lista plana, sin paginar. La jerarquía se arma con
+        parentLocationId.
+      tags: [Locations]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - name: parentLocationId
+          in: query
+          description: Devuelve solo las ubicaciones hijas directas.
+          schema:
+            type: string
+            format: uuid
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Ubicaciones.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationList'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+    post:
+      operationId: createLocation
+      summary: Crear una ubicación
+      tags: [Locations]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationRequest'
+      responses:
+        '201':
+          description: Ubicación creada.
+          headers:
+            Location:
+              $ref: 'common.yaml#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '409':
+          description: >-
+            El código ya existe (LOCATION_CODE_ALREADY_EXISTS), o la ubicación
+            padre no existe o está inactiva (LOCATION_INVALID_PARENT).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /locations/{locationId}:
+    parameters:
+      - $ref: '#/components/parameters/LocationId'
+    get:
+      operationId: getLocation
+      summary: Consultar una ubicación
+      tags: [Locations]
+      x-roles: [ADMIN, OPERATOR]
+      responses:
+        '200':
+          description: Ubicación.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+    put:
+      operationId: updateLocation
+      summary: Modificar una ubicación
+      tags: [Locations]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationRequest'
+      responses:
+        '200':
+          description: Ubicación modificada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          description: >-
+            El código ya existe (LOCATION_CODE_ALREADY_EXISTS), el padre
+            crearía un ciclo (LOCATION_HIERARCHY_CYCLE), o no existe o está
+            inactivo (LOCATION_INVALID_PARENT).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /locations/{locationId}/activate:
+    parameters:
+      - $ref: '#/components/parameters/LocationId'
+    post:
+      operationId: activateLocation
+      summary: Activar una ubicación
+      tags: [Locations]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Ubicación activa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /locations/{locationId}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/LocationId'
+    post:
+      operationId: deactivateLocation
+      summary: Desactivar una ubicación
+      description: Afecta solo al futuro. Lo ya registrado no cambia.
+      tags: [Locations]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Ubicación inactiva.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /stock-transfers:
+    post:
+      operationId: transferStock
+      summary: Trasladar stock entre ubicaciones
+      description: >-
+        Sin fromLocationId, asigna ubicación a mercadería que aún no la tiene.
+        Genera los movimientos TRANSFER_OUT y TRANSFER_IN y no cambia el stock
+        total. No se valida la cantidad en el origen, porque la ubicación es
+        referencial.
+      tags: [StockTransfers]
+      x-roles: [ADMIN, OPERATOR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferStockRequest'
+      responses:
+        '201':
+          description: Traslado registrado.
+          headers:
+            Location:
+              $ref: 'common.yaml#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockTransfer'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '409':
+          description: >-
+            El producto no tiene stock registrado (PRODUCT_STOCK_NOT_FOUND), o
+            una ubicación no existe o está inactiva (STOCK_TRANSFER_INVALID_LOCATION).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /stock-transfers/{stockTransferId}:
+    get:
+      operationId: getStockTransfer
+      summary: Consultar un traslado
+      tags: [StockTransfers]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - name: stockTransferId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Traslado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockTransfer'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /stock-adjustments:
+    get:
+      operationId: listStockAdjustments
+      summary: Listar ajustes de stock
+      tags: [StockAdjustments]
+      x-roles: [ADMIN]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: productId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Página de ajustes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockAdjustmentPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+    post:
+      operationId: adjustStock
+      summary: Ajustar stock
+      description: >-
+        Genera un movimiento ADJUSTMENT_IN o ADJUSTMENT_OUT y una alerta
+        STOCK_ADJUSTMENT. El autor sale del token. Un ajuste no se puede
+        modificar después.
+      tags: [StockAdjustments]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdjustStockRequest'
+      responses:
+        '201':
+          description: Ajuste registrado.
+          headers:
+            Location:
+              $ref: 'common.yaml#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockAdjustment'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '409':
+          description: >-
+            El producto no tiene stock registrado (PRODUCT_STOCK_NOT_FOUND), un
+            ajuste OUT supera el disponible (STOCK_ADJUSTMENT_INSUFFICIENT_AVAILABLE),
+            o el movimiento corregido no existe (STOCK_ADJUSTMENT_INVALID_MOVEMENT).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /stock-adjustments/{stockAdjustmentId}:
+    get:
+      operationId: getStockAdjustment
+      summary: Consultar un ajuste de stock
+      tags: [StockAdjustments]
+      x-roles: [ADMIN]
+      parameters:
+        - name: stockAdjustmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Ajuste de stock.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockAdjustment'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /stock:
+    get:
+      operationId: getInventoryReport
+      summary: Reporte de inventario
+      description: >-
+        Lista los productos con su stock real, reservado y disponible. Solo
+        incluye productos con algún ingreso: uno que nunca tuvo movimientos no
+        aparece. SKU, nombre y unidad se consultan a Catálogo en cada llamada.
+        Si outOfSync es true, el saldo de esa fila puede estar mal.
+      tags: [Stock]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: availability
+          in: query
+          description: >-
+            Filtra por stock disponible. IN_STOCK es mayor que 0 y OUT_OF_STOCK
+            es igual a 0.
+          schema:
+            type: string
+            enum: [ALL, IN_STOCK, OUT_OF_STOCK]
+            default: ALL
+      responses:
+        '200':
+          description: Página del reporte.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryReportPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '503':
+          $ref: 'common.yaml#/components/responses/ServiceUnavailable'
+
+  /products/{productId}/stock:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      operationId: getProductStock
+      summary: Consultar el stock de un producto
+      description: >-
+        Lee el lado de lectura, con consistencia eventual. Si outOfSync es
+        true, el saldo puede estar mal.
+      tags: [Stock]
+      x-roles: [ADMIN, OPERATOR]
+      responses:
+        '200':
+          description: Stock del producto.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductStockView'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /products/{productId}/kardex:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      operationId: getKardex
+      summary: Consultar el kardex de un producto
+      description: >-
+        Devuelve los movimientos en orden cronológico. balance es siempre el
+        saldo acumulado del producto: filtrar por ubicación no lo recalcula.
+        Si outOfSync es true, los saldos pueden estar mal.
+      tags: [Stock]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: fromDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: locationId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Página del kardex.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KardexPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /products/{productId}/rebuild-projection:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      operationId: rebuildProductProjection
+      summary: Reconstruir la proyección de un producto
+      description: >-
+        Regenera su stock y kardex desde la BD de escritura y quita la marca
+        outOfSync. Es idempotente y no afecta a otros productos (ADR-0009).
+      tags: [Stock]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Proyección reconstruida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductStockView'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /alerts:
+    get:
+      operationId: listActiveAlerts
+      summary: Listar alertas activas
+      description: Devuelve las alertas ACTIVE y ACKNOWLEDGED.
+      tags: [Alerts]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/AlertType'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, ACKNOWLEDGED]
+      responses:
+        '200':
+          description: Página de alertas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+
+  /alerts/{alertId}/acknowledge:
+    parameters:
+      - $ref: '#/components/parameters/AlertId'
+    post:
+      operationId: acknowledgeAlert
+      summary: Marcar una alerta como vista
+      description: No detiene el escalamiento de SYNC_FAILURE (ADR-0009).
+      tags: [Alerts]
+      x-roles: [ADMIN, OPERATOR]
+      responses:
+        '200':
+          description: Alerta vista.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          description: La alerta ya está resuelta (ALERT_INVALID_TRANSITION).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /alerts/{alertId}/resolve:
+    parameters:
+      - $ref: '#/components/parameters/AlertId'
+    post:
+      operationId: resolveAlert
+      summary: Resolver una alerta
+      tags: [Alerts]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Alerta resuelta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          description: >-
+            La alerta ya está resuelta (ALERT_INVALID_TRANSITION), o es una
+            SYNC_FAILURE y el producto sigue outOfSync
+            (ALERT_PRODUCT_OUT_OF_SYNC): primero hay que reconstruir la
+            proyección.
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: 'common.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    LocationId:
+      name: locationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AlertId:
+      name: alertId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    DeliveryNoteItem:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          $ref: 'common.yaml#/components/schemas/PositiveQuantity'
+
+    PurchaseDocument:
+      type: object
+      description: Documento de compra que respalda el ingreso. Es obligatorio.
+      required: [documentType, number, issueDate]
+      properties:
+        documentType:
+          type: string
+          description: INVOICE incluye boletas y facturas. Se pueden agregar tipos.
+          enum: [INVOICE, PURCHASE_ORDER]
+        series:
+          type: string
+          maxLength: 20
+        number:
+          type: string
+          minLength: 1
+          maxLength: 20
+        issueDate:
+          type: string
+          format: date
+          description: Fecha de documento de los movimientos de ingreso.
+
+    RegisterDeliveryNoteRequest:
+      type: object
+      required: [series, number, issueDate, purchaseDocument, items]
+      properties:
+        series:
+          type: string
+          minLength: 1
+          maxLength: 20
+        number:
+          type: string
+          minLength: 1
+          maxLength: 20
+        issueDate:
+          type: string
+          format: date
+        purchaseDocument:
+          $ref: '#/components/schemas/PurchaseDocument'
+        items:
+          type: array
+          minItems: 1
+          description: No puede repetirse un producto.
+          items:
+            $ref: '#/components/schemas/DeliveryNoteItem'
+
+    DeliveryNote:
+      type: object
+      required: [id, series, number, issueDate, purchaseDocument, items, registeredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        series:
+          type: string
+        number:
+          type: string
+        issueDate:
+          type: string
+          format: date
+        purchaseDocument:
+          $ref: '#/components/schemas/PurchaseDocument'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryNoteItem'
+        registeredAt:
+          type: string
+          format: date-time
+
+    DeliveryNotePage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryNote'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'
+
+    Location:
+      type: object
+      required: [id, code, name, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          examples: [ALM-A-E03]
+        name:
+          type: string
+        parentLocationId:
+          type: string
+          format: uuid
+        active:
+          type: boolean
+
+    LocationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Location'
+
+    LocationRequest:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 30
+          pattern: '^[A-Z0-9-]+$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        parentLocationId:
+          type: string
+          format: uuid
+
+    TransferStockRequest:
+      type: object
+      required: [productId, toLocationId, quantity, transferDate]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        fromLocationId:
+          type: string
+          format: uuid
+          description: Vacío si la mercadería aún no tiene ubicación.
+        toLocationId:
+          type: string
+          format: uuid
+          description: Debe ser distinta del origen.
+        quantity:
+          $ref: 'common.yaml#/components/schemas/PositiveQuantity'
+        transferDate:
+          type: string
+          format: date-time
+          description: Fecha de documento de los movimientos que genera.
+
+    StockTransfer:
+      type: object
+      required: [id, productId, toLocationId, quantity, transferDate]
+      properties:
+        id:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        fromLocationId:
+          type: string
+          format: uuid
+        toLocationId:
+          type: string
+          format: uuid
+        quantity:
+          $ref: 'common.yaml#/components/schemas/PositiveQuantity'
+        transferDate:
+          type: string
+          format: date-time
+
+    AdjustStockRequest:
+      type: object
+      required: [productId, direction, quantity, reason]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        direction:
+          $ref: '#/components/schemas/AdjustmentDirection'
+        quantity:
+          $ref: 'common.yaml#/components/schemas/PositiveQuantity'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+        correctedMovementId:
+          type: string
+          format: uuid
+          description: Movimiento que se corrige. Vacío en un conteo físico.
+
+    AdjustmentDirection:
+      type: string
+      enum: [IN, OUT]
+
+    StockAdjustment:
+      type: object
+      required: [id, productId, direction, quantity, reason, adjustedBy, adjustedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        direction:
+          $ref: '#/components/schemas/AdjustmentDirection'
+        quantity:
+          $ref: 'common.yaml#/components/schemas/PositiveQuantity'
+        reason:
+          type: string
+        correctedMovementId:
+          type: string
+          format: uuid
+        adjustedBy:
+          type: string
+          description: sub del administrador que hizo el ajuste.
+        adjustedAt:
+          type: string
+          format: date-time
+
+    StockAdjustmentPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockAdjustment'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'
+
+    LocationStock:
+      type: object
+      description: Cantidad referencial en una ubicación.
+      required: [quantity]
+      properties:
+        locationId:
+          type: string
+          format: uuid
+          description: Vacío para la mercadería sin ubicación.
+        quantity:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+
+    ProductStockView:
+      type: object
+      required: [productId, physicalStock, reservedStock, availableStock, locations, outOfSync]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        physicalStock:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+        reservedStock:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+        availableStock:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+        locations:
+          type: array
+          description: Desglose referencial por ubicación.
+          items:
+            $ref: '#/components/schemas/LocationStock'
+        outOfSync:
+          type: boolean
+        outOfSyncSince:
+          type: string
+          format: date-time
+
+    InventoryReportRow:
+      type: object
+      required:
+        - productId
+        - sku
+        - name
+        - unitOfMeasureCode
+        - physicalStock
+        - reservedStock
+        - availableStock
+        - outOfSync
+      properties:
+        productId:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        name:
+          type: string
+        unitOfMeasureCode:
+          type: string
+        physicalStock:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+        reservedStock:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+        availableStock:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+        outOfSync:
+          type: boolean
+
+    InventoryReportPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryReportRow'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'
+
+    MovementType:
+      type: string
+      enum:
+        - INBOUND
+        - OUTBOUND
+        - RETURN
+        - CANCELLATION
+        - TRANSFER_OUT
+        - TRANSFER_IN
+        - ADJUSTMENT_IN
+        - ADJUSTMENT_OUT
+
+    MovementSource:
+      type: object
+      description: Documento que origina el movimiento.
+      required: [sourceType, sourceId]
+      properties:
+        sourceType:
+          type: string
+          enum: [DELIVERY_NOTE, ORDER, STOCK_TRANSFER, STOCK_ADJUSTMENT]
+        sourceId:
+          type: string
+          format: uuid
+
+    KardexEntry:
+      type: object
+      required: [id, type, quantity, balance, documentDate, createdAt, source, unusual]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/MovementType'
+        quantity:
+          $ref: 'common.yaml#/components/schemas/PositiveQuantity'
+        balance:
+          allOf:
+            - $ref: 'common.yaml#/components/schemas/Quantity'
+          description: Saldo acumulado del producto después del movimiento.
+        locationId:
+          type: string
+          format: uuid
+        documentDate:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        source:
+          $ref: '#/components/schemas/MovementSource'
+        unusual:
+          type: boolean
+
+    KardexPage:
+      type: object
+      required: [items, page, outOfSync]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/KardexEntry'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'
+        outOfSync:
+          type: boolean
+        outOfSyncSince:
+          type: string
+          format: date-time
+
+    AlertType:
+      type: string
+      enum:
+        - MINIMUM_STOCK
+        - UNUSUAL_MOVEMENT
+        - INSUFFICIENT_STOCK
+        - SYNC_FAILURE
+        - STOCK_ADJUSTMENT
+
+    Alert:
+      type: object
+      required: [id, type, reference, message, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/AlertType'
+        reference:
+          type: string
+          description: productId, stockMovementId u orderId, según el tipo.
+        message:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, ACKNOWLEDGED, RESOLVED]
+        createdAt:
+          type: string
+          format: date-time
+
+    AlertPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'

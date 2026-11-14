@@ -1,0 +1,516 @@
+asyncapi: 3.0.0
+info:
+  title: Eventos de Órdenes
+  version: 1.0.0
+  description: >-
+    Eventos públicos del ciclo de vida del pedido. Forman parte del lenguaje
+    publicado: un cambio incompatible crea un evento nuevo (ADR-0024). Cada
+    mensaje indica sus consumidores en la extensión x-consumers.
+defaultContentType: application/json
+
+channels:
+  orderEvents:
+    address: orders.order.events
+    description: >-
+      Todos los eventos de pedido. La clave es orderId, así los eventos de un
+      mismo pedido llegan en orden.
+    messages:
+      OrderRegistered:
+        $ref: '#/components/messages/OrderRegistered'
+      OrderPending:
+        $ref: '#/components/messages/OrderPending'
+      OrderReserved:
+        $ref: '#/components/messages/OrderReserved'
+      OrderProcessed:
+        $ref: '#/components/messages/OrderProcessed'
+      OrderShipped:
+        $ref: '#/components/messages/OrderShipped'
+      OrderDelivered:
+        $ref: '#/components/messages/OrderDelivered'
+      OrderCancelled:
+        $ref: '#/components/messages/OrderCancelled'
+      OrderReturned:
+        $ref: '#/components/messages/OrderReturned'
+
+operations:
+  publishOrderEvents:
+    action: send
+    summary: Órdenes publica los eventos de pedido, vía outbox y Debezium.
+    channel:
+      $ref: '#/channels/orderEvents'
+    messages:
+      - $ref: '#/channels/orderEvents/messages/OrderRegistered'
+      - $ref: '#/channels/orderEvents/messages/OrderPending'
+      - $ref: '#/channels/orderEvents/messages/OrderReserved'
+      - $ref: '#/channels/orderEvents/messages/OrderProcessed'
+      - $ref: '#/channels/orderEvents/messages/OrderShipped'
+      - $ref: '#/channels/orderEvents/messages/OrderDelivered'
+      - $ref: '#/channels/orderEvents/messages/OrderCancelled'
+      - $ref: '#/channels/orderEvents/messages/OrderReturned'
+
+components:
+  messageTraits:
+    OrderEvent:
+      contentType: application/json
+      headers:
+        $ref: 'events-common.yaml#/components/schemas/EventHeaders'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: orderId.
+          bindingVersion: 0.5.0
+
+  messages:
+    OrderRegistered:
+      name: OrderRegistered
+      title: Pedido registrado
+      x-consumers: [inventory, notifications]
+      traits:
+        - $ref: '#/components/messageTraits/OrderEvent'
+      payload:
+        $ref: '#/components/schemas/OrderRegisteredEvent'
+      examples:
+        - name: pedidoDeOperador
+          summary: Registrado por un operador, sin customerId.
+          payload:
+            eventId: 0a1f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: OrderRegistered
+            occurredAt: '2026-11-07T15:30:00Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              contact:
+                fullName: Ana Quispe
+                phone: '+51987654321'
+              items:
+                - productId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  sku: LECHE-1L
+                  productName: Leche entera 1 L
+                  quantity: 2
+
+    OrderPending:
+      name: OrderPending
+      title: Pedido en espera por falta de stock
+      x-consumers: [notifications]
+      traits:
+        - $ref: '#/components/messageTraits/OrderEvent'
+      payload:
+        $ref: '#/components/schemas/OrderPendingEvent'
+      examples:
+        - name: faltaUnProducto
+          payload:
+            eventId: 1b2f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: OrderPending
+            occurredAt: '2026-11-07T15:30:01Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              contact:
+                fullName: Ana Quispe
+                phone: '+51987654321'
+              missingItems:
+                - productId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  sku: LECHE-1L
+                  productName: Leche entera 1 L
+                  requestedQuantity: 2
+                  availableQuantity: 1
+
+    OrderReserved:
+      name: OrderReserved
+      title: Stock reservado para el pedido
+      description: Notificaciones solo avisa si previousStatus es PENDING.
+      x-consumers: [notifications]
+      traits:
+        - $ref: '#/components/messageTraits/OrderEvent'
+      payload:
+        $ref: '#/components/schemas/OrderReservedEvent'
+      examples:
+        - name: veniaDeEspera
+          payload:
+            eventId: 2c2f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: OrderReserved
+            occurredAt: '2026-11-07T16:00:00Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              contact:
+                fullName: Ana Quispe
+                phone: '+51987654321'
+              previousStatus: PENDING
+
+    OrderProcessed:
+      name: OrderProcessed
+      title: Pedido procesado
+      description: Inventario descuenta el stock real y genera la salida en el kardex.
+      x-consumers: [inventory]
+      traits:
+        - $ref: '#/components/messageTraits/OrderEvent'
+      payload:
+        $ref: '#/components/schemas/OrderProcessedEvent'
+      examples:
+        - name: procesado
+          payload:
+            eventId: 3d2f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: OrderProcessed
+            occurredAt: '2026-11-07T16:10:00Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              contact:
+                fullName: Ana Quispe
+                phone: '+51987654321'
+              items:
+                - productId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  quantity: 2
+
+    OrderShipped:
+      name: OrderShipped
+      title: Pedido enviado
+      x-consumers: [notifications]
+      traits:
+        - $ref: '#/components/messageTraits/OrderEvent'
+      payload:
+        $ref: '#/components/schemas/OrderShippedEvent'
+      examples:
+        - name: enviado
+          payload:
+            eventId: 4e2f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: OrderShipped
+            occurredAt: '2026-11-07T16:20:00Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              contact:
+                fullName: Ana Quispe
+                email: ana@example.com
+              shippedAt: '2026-11-07T16:20:00Z'
+
+    OrderDelivered:
+      name: OrderDelivered
+      title: Pedido entregado
+      x-consumers: [notifications]
+      traits:
+        - $ref: '#/components/messageTraits/OrderEvent'
+      payload:
+        $ref: '#/components/schemas/OrderDeliveredEvent'
+      examples:
+        - name: entregado
+          payload:
+            eventId: 5f2f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: OrderDelivered
+            occurredAt: '2026-11-07T16:50:00Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              contact:
+                fullName: Ana Quispe
+                email: ana@example.com
+              deliveredAt: '2026-11-07T16:50:00Z'
+
+    OrderCancelled:
+      name: OrderCancelled
+      title: Pedido cancelado
+      description: >-
+        Inventario libera la reserva, o repone el stock real si previousStatus
+        es PROCESSED.
+      x-consumers: [inventory, notifications]
+      traits:
+        - $ref: '#/components/messageTraits/OrderEvent'
+      payload:
+        $ref: '#/components/schemas/OrderCancelledEvent'
+      examples:
+        - name: expirado
+          summary: Cancelado por el sistema al vencer el plazo.
+          payload:
+            eventId: 602f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: OrderCancelled
+            occurredAt: '2026-11-09T15:30:00Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              contact:
+                fullName: Ana Quispe
+                phone: '+51987654321'
+              previousStatus: PENDING
+              reason: Expirado sin procesar
+              actor:
+                type: SYSTEM
+              items:
+                - productId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  quantity: 2
+
+    OrderReturned:
+      name: OrderReturned
+      title: Pedido devuelto
+      description: Inventario repone el stock real de los ítems devueltos.
+      x-consumers: [inventory, notifications]
+      traits:
+        - $ref: '#/components/messageTraits/OrderEvent'
+      payload:
+        $ref: '#/components/schemas/OrderReturnedEvent'
+      examples:
+        - name: devuelto
+          payload:
+            eventId: 712f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: OrderReturned
+            occurredAt: '2026-11-08T10:00:00Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              contact:
+                fullName: Ana Quispe
+                email: ana@example.com
+              reason: Producto dañado
+              items:
+                - productId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  quantity: 2
+
+  schemas:
+    OrderStatus:
+      type: string
+      enum:
+        - REGISTERED
+        - PENDING
+        - RESERVED
+        - PROCESSED
+        - SHIPPED
+        - DELIVERED
+        - CANCELLED
+        - RETURNED
+
+    ContactInfo:
+      type: object
+      description: Datos del destinatario. Debe tener al menos email o phone.
+      required: [fullName]
+      anyOf:
+        - required: [email]
+        - required: [phone]
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+
+    Actor:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [CUSTOMER, OPERATOR, ADMIN, SYSTEM]
+        userId:
+          type: string
+          description: Vacío para SYSTEM.
+
+    OrderData:
+      type: object
+      description: Datos que llevan todos los eventos de pedido.
+      required: [orderId, contact]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+          description: Solo si el pedido lo registró un CUSTOMER (ADR-0023).
+        contact:
+          $ref: '#/components/schemas/ContactInfo'
+
+    ItemQuantity:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          format: int64
+          minimum: 1
+
+    RegisteredItem:
+      type: object
+      required: [productId, sku, productName, quantity]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        productName:
+          type: string
+        quantity:
+          type: integer
+          format: int64
+          minimum: 1
+
+    MissingItem:
+      type: object
+      required: [productId, sku, productName, requestedQuantity, availableQuantity]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        productName:
+          type: string
+        requestedQuantity:
+          type: integer
+          format: int64
+          minimum: 1
+        availableQuantity:
+          type: integer
+          format: int64
+          minimum: 0
+
+    OrderRegisteredEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OrderRegistered
+            data:
+              allOf:
+                - $ref: '#/components/schemas/OrderData'
+                - type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      minItems: 1
+                      items:
+                        $ref: '#/components/schemas/RegisteredItem'
+
+    OrderPendingEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OrderPending
+            data:
+              allOf:
+                - $ref: '#/components/schemas/OrderData'
+                - type: object
+                  required: [missingItems]
+                  properties:
+                    missingItems:
+                      type: array
+                      minItems: 1
+                      items:
+                        $ref: '#/components/schemas/MissingItem'
+
+    OrderReservedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OrderReserved
+            data:
+              allOf:
+                - $ref: '#/components/schemas/OrderData'
+                - type: object
+                  required: [previousStatus]
+                  properties:
+                    previousStatus:
+                      type: string
+                      enum: [REGISTERED, PENDING]
+
+    OrderProcessedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OrderProcessed
+            data:
+              allOf:
+                - $ref: '#/components/schemas/OrderData'
+                - type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      minItems: 1
+                      items:
+                        $ref: '#/components/schemas/ItemQuantity'
+
+    OrderShippedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OrderShipped
+            data:
+              allOf:
+                - $ref: '#/components/schemas/OrderData'
+                - type: object
+                  required: [shippedAt]
+                  properties:
+                    shippedAt:
+                      type: string
+                      format: date-time
+
+    OrderDeliveredEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OrderDelivered
+            data:
+              allOf:
+                - $ref: '#/components/schemas/OrderData'
+                - type: object
+                  required: [deliveredAt]
+                  properties:
+                    deliveredAt:
+                      type: string
+                      format: date-time
+
+    OrderCancelledEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OrderCancelled
+            data:
+              allOf:
+                - $ref: '#/components/schemas/OrderData'
+                - type: object
+                  required: [previousStatus, reason, actor, items]
+                  properties:
+                    previousStatus:
+                      $ref: '#/components/schemas/OrderStatus'
+                    reason:
+                      type: string
+                    actor:
+                      $ref: '#/components/schemas/Actor'
+                    items:
+                      type: array
+                      minItems: 1
+                      items:
+                        $ref: '#/components/schemas/ItemQuantity'
+
+    OrderReturnedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OrderReturned
+            data:
+              allOf:
+                - $ref: '#/components/schemas/OrderData'
+                - type: object
+                  required: [reason, items]
+                  properties:
+                    reason:
+                      type: string
+                    items:
+                      type: array
+                      minItems: 1
+                      items:
+                        $ref: '#/components/schemas/ItemQuantity'

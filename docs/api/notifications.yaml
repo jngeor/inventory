@@ -1,0 +1,162 @@
+openapi: 3.1.0
+info:
+  title: API de Notificaciones
+  version: 1.0.0
+  description: >-
+    Consulta de los avisos enviados al destinatario de cada pedido y reenvío
+    manual de los fallidos. Los avisos se generan por eventos, no por esta API.
+    Los roles de cada operación están en la extensión x-roles. Convenciones en
+    docs/api/README.md.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Notifications
+    description: Registro de avisos, uno por evento y canal.
+
+paths:
+  /notifications:
+    get:
+      operationId: listNotifications
+      summary: Listar notificaciones
+      tags: [Notifications]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: orderId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/NotificationStatus'
+        - name: fromDate
+          in: query
+          description: Fecha de creación desde.
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          description: Fecha de creación hasta.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Página de notificaciones.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+
+  /notifications/{notificationId}/reprocess:
+    post:
+      operationId: reprocessFailedNotification
+      summary: Reenviar una notificación fallida
+      description: >-
+        Solo para notificaciones en FAILED. Responde 200 con el resultado del
+        reenvío, que puede ser SENT o de nuevo FAILED. Tiene un máximo de
+        intentos, para no reenviar sin límite (ADR-0010).
+      tags: [Notifications]
+      x-roles: [ADMIN]
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Resultado del reenvío.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          description: >-
+            La notificación no está en FAILED (NOTIFICATION_INVALID_TRANSITION),
+            o agotó sus intentos (NOTIFICATION_MAX_ATTEMPTS_REACHED).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: 'common.yaml#/components/securitySchemes/bearerAuth'
+
+  schemas:
+    NotificationStatus:
+      type: string
+      enum: [PENDING, SENT, FAILED]
+
+    Notification:
+      type: object
+      required: [id, orderId, channel, recipient, template, status, attempts, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [EMAIL, SMS]
+        recipient:
+          type: string
+          description: Email o teléfono del destinatario.
+        template:
+          type: string
+          enum:
+            - ORDER_REGISTERED
+            - ORDER_PENDING
+            - ORDER_STOCK_AVAILABLE
+            - ORDER_SHIPPED
+            - ORDER_DELIVERED
+            - ORDER_CANCELLED
+            - ORDER_RETURNED
+        status:
+          $ref: '#/components/schemas/NotificationStatus'
+        attempts:
+          type: integer
+          minimum: 0
+        lastError:
+          type: string
+          description: Último error del proveedor.
+        createdAt:
+          type: string
+          format: date-time
+        sentAt:
+          type: string
+          format: date-time
+
+    NotificationPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'

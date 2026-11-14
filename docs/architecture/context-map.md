@@ -9,7 +9,7 @@ Diseño estratégico (DDD) del sistema: qué subdominios hay, qué *bounded cont
 | Control de stock y kardex | **Core** | Inventario | Es el valor del sistema: stock confiable, reservas, kardex auditable y detección de movimientos inusuales (posible manipulación). Concentra la mayor inversión: CQRS, outbox + CDC, modelo de lectura propio. |
 | Gestión de pedidos | **Supporting** | Órdenes | Reglas propias (máquina de estados, expiración a 48 h, incidencias), pero existe para alimentar al core; no es el diferenciador. |
 | Maestro de productos | **Generic** | Catálogo | CRUD de datos maestros (producto, categoría, unidad de medida). Sin reglas de negocio relevantes. |
-| Comunicación con el cliente | **Generic** | Notificaciones | Envío de avisos por email/SMS a partir de eventos. Podría reemplazarse por un servicio de terceros. |
+| Comunicación con el destinatario | **Generic** | Notificaciones | Envío de avisos por email/SMS a partir de eventos. Podría reemplazarse por un servicio de terceros. |
 | Identidad y acceso | **Generic** (externo) | Keycloak | Se adopta tal cual; no se desarrolla. |
 
 **Consecuencia práctica**: los patrones más costosos (CQRS, BD de lectura, reportes) se aplican solo en Inventario. Catálogo y Notificaciones se mantienen lo más simples posible.
@@ -56,7 +56,7 @@ Los proveedores de email/SMS son upstream técnicos de Notificaciones (ellos def
 | R2 | Catálogo → Órdenes | **OHS + PL** (Catálogo) / **Anticorruption Layer** (Órdenes) | REST síncrono, solo al registrar el pedido | API de lectura de productos: estado activo, `sku`, `name`, unidad de medida | Igual que R1: el pedido no se registra y el cliente recibe error. |
 | R3 | Órdenes ⇄ Inventario | **Partnership** + **Published Language** | Asíncrono, Kafka (saga coreografiada, README 4.2), publicando vía outbox + Debezium | Eventos de pedido ↔ eventos de reserva (sección 5) | Consumidores: 3 reintentos y DLQ. Lo que no se resuelve lo cubre la expiración a 48 h. |
 | R4 | Órdenes → Notificaciones | **Published Language** (Órdenes) / **Conformist** (Notificaciones) | Asíncrono, Kafka | Los mismos eventos de pedido de R3; cada uno trae `contact` | Notificación en `FAILED` + DLQ. No afecta al pedido. |
-| R5 | Keycloak → todos | **OHS** (OIDC) / **Conformist** | Token JWT validado por cada microservicio (resource server) | Claims estándar; `sub` se usa como `customerId` en Órdenes | Sin token válido, la API responde 401/403. |
+| R5 | Keycloak → todos | **OHS** (OIDC) / **Conformist** | Token JWT validado por cada microservicio (resource server) | Claims estándar; `sub` se usa como `customerId` en Órdenes cuando registra un cliente (ADR-0023) | Sin token válido, la API responde 401/403. |
 | R6 | Proveedores email/SMS → Notificaciones | **Anticorruption Layer** (Notificaciones) | SMTP / adaptador de log, detrás del puerto `NotificationSender` | API del proveedor, aislada en el adaptador | Timeout 5 s, 3 reintentos, circuit breaker, luego `FAILED` (README 5.1). |
 | R7 | Inventario y Órdenes → Panel del administrador | **OHS** | REST; el panel combina las dos fuentes en el cliente (README 4.3) | Endpoint de "alertas activas" de cada servicio | El panel muestra la fuente que responda. |
 
@@ -81,7 +81,7 @@ El mismo término de negocio tiene un modelo distinto en cada contexto. Esto es 
 |---|---|---|---|---|
 | **Producto** | `Product`: maestro completo (sku, nombre, categoría, unidad, `minimumStock`, activo) | `ProductStock`: solo `productId` + `physicalStock`/`reservedStock` | Snapshot dentro de `OrderItem` (`productId`, `sku`, `name`, unidad) | `productName` del evento, solo para la plantilla |
 | **Pedido** | — | `StockReservation` (una por `orderId`, todo o nada) | `Order`: ciclo de vida completo | El evento recibido + `Notification` por canal |
-| **Cliente** | — | — | `customerId` (`sub` de Keycloak) + `ContactInfo` y `Address` (snapshots) | `recipient` (email o teléfono copiado de `contact`) |
+| **Destinatario** | — | — | `ContactInfo` y `Address` (snapshots) + `customerId` opcional (`sub` de Keycloak) | `recipient` (email o teléfono copiado de `contact`) |
 | **Alerta** | — | `Alert` (`MINIMUM_STOCK`, `UNUSUAL_MOVEMENT`, `INSUFFICIENT_STOCK`, `SYNC_FAILURE`) | `Alert` (`ORDER_CANCELLED`) | — (los fallos de envío van a `FAILED` + DLQ, sin alerta de negocio) |
 | **Cancelación / devolución** | — | Movimientos `CANCELLATION` / `RETURN` en el kardex | `Cancellation`, `OrderReturn` e `Incident` con motivo | Aviso al cliente |
 
@@ -102,16 +102,16 @@ Solo los eventos que cruzan los límites de un contexto. Los eventos internos de
 | `StockReserved` | Inventario | Órdenes | `orderId` |
 | `StockInsufficient` | Inventario | Órdenes | `orderId`, ítems faltantes |
 
-Todos los eventos de pedido llevan `orderId`, `customerId` y `contact`. Todos los eventos llevan un `eventId` único (idempotencia del consumidor) y propagan el `traceId` en los headers de Kafka (README 5).
+Todos los eventos de pedido llevan `orderId`, `contact` y, si existe, `customerId`. Todos los eventos llevan un `eventId` único (idempotencia del consumidor) y propagan el `traceId` en los headers de Kafka (README 5).
 
 **Topics (decidido 2026-11-07)**: siguen la convención `<servicio>.<agregado>.events` y los enruta el Outbox Event Router de Debezium según `aggregatetype`:
 * `orders.order.events`: todos los eventos de pedido.
 * `inventory.reservation.events`: `StockReserved` y `StockInsufficient`.
 
 Además existe un topic privado de Inventario, que **no es un contrato entre contextos** y puede cambiar sin coordinar con nadie:
-* `inventory.internal.events`: los 7 eventos del CQRS (`StockMovementRecorded`, `ProductStockChanged`, `DeliveryNoteRegistered`, `StockTransferred`, `AlertRaised`, `AlertStatusChanged` y `LocationChanged`). Es uno solo porque Kafka solo garantiza el orden dentro de una partición: `StockMovementRecorded` y `ProductStockChanged` son de agregados distintos y deben compartir topic para que la clave `productId` conserve su orden.
+* `inventory.internal.events`: los 4 eventos del CQRS (`StockMovementRecorded`, `ProductStockChanged`, `AlertRaised` y `AlertStatusChanged`). Es uno solo porque Kafka solo garantiza el orden dentro de una partición: `StockMovementRecorded` y `ProductStockChanged` son de agregados distintos y deben compartir topic para que la clave `productId` conserve su orden.
 
-Cada topic tiene su DLQ `<topic>.DLT` (README 5.1). El formato del contrato (AsyncAPI, JSON Schema o Avro) se decidirá aparte y vivirá en `docs/api/`.
+Cada topic tiene su DLQ `<topic>.DLT` (README 5.1). El contrato de cada evento se escribe en AsyncAPI con JSON Schema y vive en `docs/api/` (ADR-0024).
 
 ## 6. Reglas de los límites
 

@@ -1,0 +1,22 @@
+extends:
+  - recommended
+
+rules:
+  info-license: off
+
+apis:
+  catalog:
+    root: catalog.yaml
+  inventory:
+    root: inventory.yaml
+  orders:
+    root: orders.yaml
+  notifications:
+    root: notifications.yaml
+  common:
+    root: common.yaml
+    rules:
+      # common.yaml es una librería de componentes: no tiene servidores
+      # y sus componentes se usan desde los contratos de cada servicio.
+      no-empty-servers: off
+      no-unused-components: off

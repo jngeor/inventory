@@ -1,6 +1,6 @@
 # ADR-0013: Keycloak como proveedor de identidad y cada servicio como resource server
 
-* **Estado**: Aceptado
+* **Estado**: Aceptado; roles y origen del `customerId` ampliados por ADR-0023
 * **Fecha**: 2026-10-31
 * **Ticket**: KOAL-4
 

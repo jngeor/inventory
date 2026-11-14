@@ -135,13 +135,13 @@ Escenarios de calidad medibles para validar que la arquitectura cumple lo que pr
 
 | Parte | Detalle |
 |---|---|
-| Fuente | Cliente autenticado con un token válido. |
-| Estímulo | (a) Consulta o cancela un pedido de otro cliente. (b) Intenta procesar, enviar o entregar un pedido, registrar una guía de remisión o resolver una alerta. |
-| Artefacto | Autorización en Órdenes e Inventario (roles de Keycloak + `customerId` = `sub`). |
+| Fuente | Cliente u operador autenticado con un token válido. |
+| Estímulo | (a) Consulta o cancela un pedido de otro cliente. (b) Un cliente intenta procesar, enviar o entregar un pedido, registrar una guía de remisión o resolver una alerta. (c) Un operador intenta ajustar stock, devolver un pedido o resolver una alerta. |
+| Artefacto | Autorización en Órdenes e Inventario (roles de Keycloak + `customerId` = `sub` para el rol `CUSTOMER`, ADR-0023). |
 | Entorno | Operación normal. |
-| Respuesta | (a) Se responde 404, como si el pedido no existiera, para no revelar qué ids existen. (b) Se responde 403. En ambos casos queda un registro de auditoría en los logs, con un campo que lo identifica, el `sub` y el `traceId`; se conserva lo que dure la retención de logs (ADR-0013). |
+| Respuesta | (a) Se responde 404, como si el pedido no existiera, para no revelar qué ids existen. (b) y (c) Se responde 403. En todos los casos queda un registro de auditoría en los logs, con un campo que lo identifica, el `sub` y el `traceId`; se conserva lo que dure la retención de logs (ADR-0013). |
 | Medida | **100 %** de los intentos bloqueados y **0** cambios de estado. Los casos (a) y (b) están cubiertos por tests en cada caso de uso que recibe un `orderId` o requiere el rol de administrador. |
-| Verificación | Tests de integración con tokens de prueba de dos clientes y un administrador (Keycloak en Testcontainers). |
+| Verificación | Tests de integración con tokens de prueba de dos clientes, un operador y un administrador (Keycloak en Testcontainers). |
 
 ### S3. Movimiento de kardex con fecha manipulada (A)
 

@@ -1,0 +1,141 @@
+asyncapi: 3.0.0
+info:
+  title: Eventos de Inventario
+  version: 1.0.0
+  description: >-
+    Respuesta de Inventario en la saga de reserva de stock. Forman parte del
+    lenguaje publicado: un cambio incompatible crea un evento nuevo (ADR-0024).
+    Los eventos internos del CQRS no están aquí. Cada mensaje indica sus
+    consumidores en la extensión x-consumers.
+defaultContentType: application/json
+
+channels:
+  reservationEvents:
+    address: inventory.reservation.events
+    description: >-
+      Resultado de cada reserva. La clave es orderId, así los eventos de un
+      mismo pedido llegan en orden.
+    messages:
+      StockReserved:
+        $ref: '#/components/messages/StockReserved'
+      StockInsufficient:
+        $ref: '#/components/messages/StockInsufficient'
+
+operations:
+  publishReservationEvents:
+    action: send
+    summary: Inventario publica el resultado de la reserva, vía outbox y Debezium.
+    channel:
+      $ref: '#/channels/reservationEvents'
+    messages:
+      - $ref: '#/channels/reservationEvents/messages/StockReserved'
+      - $ref: '#/channels/reservationEvents/messages/StockInsufficient'
+
+components:
+  messageTraits:
+    ReservationEvent:
+      contentType: application/json
+      headers:
+        $ref: 'events-common.yaml#/components/schemas/EventHeaders'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: orderId.
+          bindingVersion: 0.5.0
+
+  messages:
+    StockReserved:
+      name: StockReserved
+      title: Stock reservado
+      description: >-
+        Se publica al reservar, también si la reserva estaba en espera y llegó
+        stock suficiente.
+      x-consumers: [orders]
+      traits:
+        - $ref: '#/components/messageTraits/ReservationEvent'
+      payload:
+        $ref: '#/components/schemas/StockReservedEvent'
+      examples:
+        - name: reservado
+          payload:
+            eventId: 8a2f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: StockReserved
+            occurredAt: '2026-11-07T15:30:01Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+
+    StockInsufficient:
+      name: StockInsufficient
+      title: Stock insuficiente
+      description: La reserva es todo o nada, así que no se bloqueó ningún ítem.
+      x-consumers: [orders]
+      traits:
+        - $ref: '#/components/messageTraits/ReservationEvent'
+      payload:
+        $ref: '#/components/schemas/StockInsufficientEvent'
+      examples:
+        - name: faltaUnProducto
+          payload:
+            eventId: 9b2f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: StockInsufficient
+            occurredAt: '2026-11-07T15:30:01Z'
+            data:
+              orderId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+              missingItems:
+                - productId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  requestedQuantity: 2
+                  availableQuantity: 1
+
+  schemas:
+    MissingItem:
+      type: object
+      required: [productId, requestedQuantity, availableQuantity]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        requestedQuantity:
+          type: integer
+          format: int64
+          minimum: 1
+        availableQuantity:
+          type: integer
+          format: int64
+          minimum: 0
+
+    StockReservedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: StockReserved
+            data:
+              type: object
+              required: [orderId]
+              properties:
+                orderId:
+                  type: string
+                  format: uuid
+
+    StockInsufficientEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: StockInsufficient
+            data:
+              type: object
+              required: [orderId, missingItems]
+              properties:
+                orderId:
+                  type: string
+                  format: uuid
+                missingItems:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/MissingItem'

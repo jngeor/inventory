@@ -1,0 +1,32 @@
+# Esquemas compartidos por los contratos de eventos (ADR-0024).
+# No es un documento AsyncAPI: solo lo referencian los archivos *.events.yaml.
+components:
+  schemas:
+    EventEnvelope:
+      type: object
+      description: Campos comunes de todo evento. Los datos propios van en data.
+      required: [eventId, eventType, occurredAt, data]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Identificador único. Los consumidores lo usan para descartar duplicados.
+        eventType:
+          type: string
+          description: Nombre del evento. Un consumidor ignora los tipos que no le interesan.
+        occurredAt:
+          type: string
+          format: date-time
+          description: Fecha y hora del hecho, en UTC.
+        data:
+          type: object
+
+    EventHeaders:
+      type: object
+      required: [traceparent]
+      properties:
+        traceparent:
+          type: string
+          description: Contexto de la traza, en formato W3C (ADR-0014).
+          examples:
+            - 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01

@@ -1,6 +1,6 @@
 # ADR-0007: MongoDB para la lectura de Inventario y PostgreSQL para el resto
 
-* **Estado**: Aceptado
+* **Estado**: Aceptado; ampliado por ADR-0025
 * **Fecha**: 2026-11-01
 * **Ticket**: KOAL-4
 

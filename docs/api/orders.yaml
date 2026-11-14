@@ -1,0 +1,799 @@
+openapi: 3.1.0
+info:
+  title: API de Órdenes
+  version: 1.0.0
+  description: >-
+    Ciclo de vida del pedido, incidencias y alertas de Órdenes. La reserva de
+    stock ocurre por eventos, así que un pedido registrado aún no tiene stock
+    confirmado. Los roles de cada operación están en la extensión x-roles.
+    Convenciones en docs/api/README.md.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Orders
+    description: Pedidos y sus transiciones de estado.
+  - name: Incidents
+    description: Registro de cancelaciones y devoluciones.
+  - name: Alerts
+    description: Alertas de Órdenes.
+
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      summary: Listar pedidos
+      description: >-
+        Con el rol CUSTOMER solo devuelve los pedidos del usuario del token.
+        Con OPERATOR y ADMIN devuelve todos.
+      tags: [Orders]
+      x-roles: [ADMIN, OPERATOR, CUSTOMER]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - name: fromDate
+          in: query
+          description: Fecha de registro desde.
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          description: Fecha de registro hasta.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Página de pedidos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderSummaryPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+    post:
+      operationId: registerOrder
+      summary: Registrar un pedido
+      description: >-
+        El pedido se registra haya o no stock y queda en REGISTERED. La
+        verificación de stock es asíncrona: el estado cambia después a RESERVED
+        o PENDING. contact y shippingAddress son del destinatario, que puede no
+        tener cuenta. Si registra un CUSTOMER, customerId sale del token; si
+        registra OPERATOR o ADMIN, el pedido no lo tiene. Con Idempotency-Key,
+        reintentar no crea un segundo pedido: responde 200 con el pedido ya
+        creado.
+      tags: [Orders]
+      x-roles: [ADMIN, OPERATOR, CUSTOMER]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterOrderRequest'
+      responses:
+        '200':
+          description: La clave ya se usó con los mismos datos. Es el pedido ya creado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '201':
+          description: Pedido registrado.
+          headers:
+            Location:
+              $ref: 'common.yaml#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '409':
+          description: >-
+            Un producto no existe o está inactivo (ORDER_INVALID_PRODUCT), o la
+            clave ya se usó con otros datos (ORDER_IDEMPOTENCY_KEY_REUSED).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+        '503':
+          $ref: 'common.yaml#/components/responses/ServiceUnavailable'
+
+  /orders/{orderId}:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    get:
+      operationId: getOrder
+      summary: Consultar un pedido
+      description: >-
+        Para el rol CUSTOMER, un pedido ajeno responde 404, igual que uno
+        inexistente.
+      tags: [Orders]
+      x-roles: [ADMIN, OPERATOR, CUSTOMER]
+      responses:
+        '200':
+          description: Pedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /orders/{orderId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      operationId: cancelOrder
+      summary: Cancelar un pedido
+      description: >-
+        CUSTOMER cancela sus pedidos y OPERATOR cualquiera, en REGISTERED,
+        PENDING o RESERVED. ADMIN también puede hacerlo desde PROCESSED. Para
+        CUSTOMER, un pedido ajeno responde 404.
+      tags: [Orders]
+      x-roles: [ADMIN, OPERATOR, CUSTOMER]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelOrderRequest'
+      responses:
+        '200':
+          description: Pedido cancelado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidTransition'
+
+  /orders/{orderId}/process:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      operationId: processOrder
+      summary: Procesar un pedido
+      description: Solo desde RESERVED. Inventario descuenta el stock real.
+      tags: [Orders]
+      x-roles: [ADMIN, OPERATOR]
+      responses:
+        '200':
+          description: Pedido procesado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidTransition'
+
+  /orders/{orderId}/ship:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      operationId: shipOrder
+      summary: Enviar un pedido
+      description: Solo desde PROCESSED. Registra la fecha de envío.
+      tags: [Orders]
+      x-roles: [ADMIN, OPERATOR]
+      responses:
+        '200':
+          description: Pedido enviado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidTransition'
+
+  /orders/{orderId}/deliver:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      operationId: deliverOrder
+      summary: Entregar un pedido
+      description: Solo desde SHIPPED.
+      tags: [Orders]
+      x-roles: [ADMIN, OPERATOR]
+      responses:
+        '200':
+          description: Pedido entregado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidTransition'
+
+  /orders/{orderId}/return:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      operationId: returnOrder
+      summary: Devolver un pedido
+      description: >-
+        Solo desde DELIVERED. Hoy la devolución es total: items debe incluir
+        todos los ítems con su cantidad completa. El stock se repone al
+        registrarla.
+      tags: [Orders]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReturnOrderRequest'
+      responses:
+        '200':
+          description: Pedido devuelto.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          description: >-
+            La transición no es válida o hubo una escritura concurrente
+            (ORDER_INVALID_TRANSITION), o faltan ítems o cantidades
+            (ORDER_RETURN_INCOMPLETE).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /orders/incidents:
+    get:
+      operationId: listIncidents
+      summary: Listar incidencias
+      tags: [Incidents]
+      x-roles: [ADMIN]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: orderId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CANCELLATION, RETURN]
+        - name: fromDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Página de incidencias.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+
+  /orders/alerts:
+    get:
+      operationId: listActiveAlerts
+      summary: Listar alertas activas
+      description: Devuelve las alertas ACTIVE y ACKNOWLEDGED.
+      tags: [Alerts]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, ACKNOWLEDGED]
+      responses:
+        '200':
+          description: Página de alertas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+
+  /orders/alerts/{alertId}/acknowledge:
+    parameters:
+      - $ref: '#/components/parameters/AlertId'
+    post:
+      operationId: acknowledgeAlert
+      summary: Marcar una alerta como vista
+      tags: [Alerts]
+      x-roles: [ADMIN, OPERATOR]
+      responses:
+        '200':
+          description: Alerta vista.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AlertAlreadyResolved'
+
+  /orders/alerts/{alertId}/resolve:
+    parameters:
+      - $ref: '#/components/parameters/AlertId'
+    post:
+      operationId: resolveAlert
+      summary: Resolver una alerta
+      tags: [Alerts]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Alerta resuelta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AlertAlreadyResolved'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: 'common.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: >-
+        Clave que quien registra genera por cada intento. Es opcional y única
+        por usuario. Se recomienda un UUID.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AlertId:
+      name: alertId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    InvalidTransition:
+      description: >-
+        El estado del pedido no permite la acción, o hubo una escritura
+        concurrente (ORDER_INVALID_TRANSITION).
+      content:
+        application/problem+json:
+          schema:
+            $ref: 'common.yaml#/components/schemas/Problem'
+    AlertAlreadyResolved:
+      description: La alerta ya está resuelta (ALERT_INVALID_TRANSITION).
+      content:
+        application/problem+json:
+          schema:
+            $ref: 'common.yaml#/components/schemas/Problem'
+
+  schemas:
+    OrderStatus:
+      type: string
+      enum:
+        - REGISTERED
+        - PENDING
+        - RESERVED
+        - PROCESSED
+        - SHIPPED
+        - DELIVERED
+        - CANCELLED
+        - RETURNED
+
+    ContactInfo:
+      type: object
+      description: Datos del destinatario. Debe tener al menos email o phone.
+      required: [fullName]
+      anyOf:
+        - required: [email]
+        - required: [phone]
+      properties:
+        fullName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        phone:
+          type: string
+          pattern: '^\+?[0-9]{6,15}$'
+
+    Address:
+      type: object
+      required: [line, district, city, region]
+      properties:
+        line:
+          type: string
+          minLength: 1
+          maxLength: 200
+        district:
+          type: string
+          minLength: 1
+          maxLength: 100
+        city:
+          type: string
+          minLength: 1
+          maxLength: 100
+        region:
+          type: string
+          minLength: 1
+          maxLength: 100
+        reference:
+          type: string
+          maxLength: 200
+
+    RequestedItem:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          $ref: 'common.yaml#/components/schemas/PositiveQuantity'
+
+    RegisterOrderRequest:
+      type: object
+      required: [contact, shippingAddress, items]
+      properties:
+        contact:
+          $ref: '#/components/schemas/ContactInfo'
+        shippingAddress:
+          $ref: '#/components/schemas/Address'
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: No puede repetirse un producto.
+          items:
+            $ref: '#/components/schemas/RequestedItem'
+
+    CancelOrderRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    ReturnOrderRequest:
+      type: object
+      required: [reason, items]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/RequestedItem'
+
+    OrderItem:
+      type: object
+      description: >-
+        Incluye los datos del producto tal como eran al registrar el pedido.
+      required: [productId, sku, productName, unitOfMeasureCode, quantity]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        productName:
+          type: string
+        unitOfMeasureCode:
+          type: string
+        quantity:
+          $ref: 'common.yaml#/components/schemas/PositiveQuantity'
+
+    Actor:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [CUSTOMER, OPERATOR, ADMIN, SYSTEM]
+        userId:
+          type: string
+          description: Vacío para SYSTEM. Se omite para el rol CUSTOMER.
+
+    StatusChange:
+      type: object
+      required: [to, changedAt, actor]
+      properties:
+        from:
+          allOf:
+            - $ref: '#/components/schemas/OrderStatus'
+          description: Vacío en el registro del pedido.
+        to:
+          $ref: '#/components/schemas/OrderStatus'
+        changedAt:
+          type: string
+          format: date-time
+        actor:
+          $ref: '#/components/schemas/Actor'
+        reason:
+          type: string
+
+    Cancellation:
+      type: object
+      required: [reason, actor, previousStatus, cancelledAt]
+      properties:
+        reason:
+          type: string
+        actor:
+          $ref: '#/components/schemas/Actor'
+        previousStatus:
+          $ref: '#/components/schemas/OrderStatus'
+        cancelledAt:
+          type: string
+          format: date-time
+
+    OrderReturn:
+      type: object
+      required: [reason, items, returnedAt]
+      properties:
+        reason:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedItem'
+        returnedAt:
+          type: string
+          format: date-time
+
+    Order:
+      type: object
+      required:
+        - id
+        - registeredBy
+        - contact
+        - shippingAddress
+        - items
+        - status
+        - statusHistory
+        - registeredAt
+        - expiresAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+          description: sub del cliente, si lo registró un CUSTOMER.
+        registeredBy:
+          $ref: '#/components/schemas/Actor'
+        contact:
+          $ref: '#/components/schemas/ContactInfo'
+        shippingAddress:
+          $ref: '#/components/schemas/Address'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        statusHistory:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusChange'
+        registeredAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        processedAt:
+          type: string
+          format: date-time
+        shippedAt:
+          type: string
+          format: date-time
+        deliveredAt:
+          type: string
+          format: date-time
+        cancellation:
+          $ref: '#/components/schemas/Cancellation'
+        orderReturn:
+          $ref: '#/components/schemas/OrderReturn'
+
+    OrderSummary:
+      type: object
+      description: Versión corta del pedido, para listas.
+      required: [id, status, itemCount, registeredAt, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        itemCount:
+          type: integer
+          minimum: 1
+        registeredAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    OrderSummaryPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderSummary'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'
+
+    Incident:
+      type: object
+      required: [id, orderId, type, reason, actor, previousStatus, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [CANCELLATION, RETURN]
+        reason:
+          type: string
+        actor:
+          $ref: '#/components/schemas/Actor'
+        previousStatus:
+          $ref: '#/components/schemas/OrderStatus'
+        occurredAt:
+          type: string
+          format: date-time
+
+    IncidentPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Incident'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'
+
+    Alert:
+      type: object
+      required: [id, type, reference, message, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [ORDER_CANCELLED]
+        reference:
+          type: string
+          description: orderId del pedido que originó la alerta.
+        message:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, ACKNOWLEDGED, RESOLVED]
+        createdAt:
+          type: string
+          format: date-time
+
+    AlertPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'

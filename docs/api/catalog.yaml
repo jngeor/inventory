@@ -1,0 +1,783 @@
+openapi: 3.1.0
+info:
+  title: API de Catálogo
+  version: 1.0.0
+  description: >-
+    Maestro de productos, categorías y unidades de medida. Los roles de cada
+    operación están en la extensión x-roles. Convenciones en docs/api/README.md.
+servers:
+  - url: /api/v1/catalog
+security:
+  - bearerAuth: []
+tags:
+  - name: Products
+    description: Productos del catálogo.
+  - name: Categories
+    description: Categorías, con jerarquía opcional.
+  - name: UnitsOfMeasure
+    description: Unidades de medida configurables.
+
+paths:
+  /products:
+    get:
+      operationId: listProducts
+      summary: Listar productos
+      description: >-
+        Con el rol CUSTOMER solo devuelve productos activos e ignora el filtro
+        active. Los filtros sku e ids sirven para consultas exactas: sku
+        devuelve 0 o 1 elemento.
+      tags: [Products]
+      x-roles: [ADMIN, OPERATOR, CUSTOMER, SERVICE]
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/Page'
+        - $ref: 'common.yaml#/components/parameters/Size'
+        - name: q
+          in: query
+          description: Texto a buscar en el SKU o el nombre.
+          schema:
+            type: string
+            maxLength: 100
+        - name: sku
+          in: query
+          description: SKU exacto.
+          schema:
+            $ref: '#/components/schemas/Sku'
+        - name: ids
+          in: query
+          description: >-
+            Ids de productos, separados por comas. Permite consultar los ítems
+            de un pedido o una guía en una sola llamada.
+          style: form
+          explode: false
+          schema:
+            type: array
+            maxItems: 100
+            items:
+              type: string
+              format: uuid
+        - name: categoryId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Página de productos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+    post:
+      operationId: registerProduct
+      summary: Registrar un producto
+      tags: [Products]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterProductRequest'
+      responses:
+        '201':
+          description: Producto registrado.
+          headers:
+            Location:
+              $ref: 'common.yaml#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '409':
+          description: >-
+            El SKU ya existe (PRODUCT_SKU_ALREADY_EXISTS), o la categoría o la
+            unidad no existen o están inactivas (PRODUCT_INVALID_REFERENCE).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /products/{productId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      operationId: getProduct
+      summary: Consultar un producto
+      description: Con el rol CUSTOMER, un producto inactivo responde 404.
+      tags: [Products]
+      x-roles: [ADMIN, OPERATOR, CUSTOMER, SERVICE]
+      responses:
+        '200':
+          description: Producto.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+    put:
+      operationId: updateProduct
+      summary: Modificar un producto
+      description: >-
+        No cambia el SKU, que es inmutable, ni el stock mínimo, que tiene su
+        propia operación.
+      tags: [Products]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProductRequest'
+      responses:
+        '200':
+          description: Producto modificado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          description: >-
+            La categoría o la unidad nuevas no existen o están inactivas
+            (PRODUCT_INVALID_REFERENCE). Conservar una que el producto ya tenía
+            es válido aunque esté inactiva.
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /products/{productId}/minimum-stock:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    put:
+      operationId: setMinimumStock
+      summary: Fijar el stock mínimo
+      tags: [Products]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetMinimumStockRequest'
+      responses:
+        '200':
+          description: Stock mínimo actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /products/{productId}/activate:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      operationId: activateProduct
+      summary: Activar un producto
+      tags: [Products]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Producto activo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /products/{productId}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      operationId: deactivateProduct
+      summary: Desactivar un producto
+      tags: [Products]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Producto inactivo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /categories:
+    get:
+      operationId: listCategories
+      summary: Listar categorías
+      description: >-
+        Devuelve una lista plana, sin paginar. La jerarquía se arma con
+        parentCategoryId. Con el rol CUSTOMER solo devuelve categorías activas.
+      tags: [Categories]
+      x-roles: [ADMIN, OPERATOR, CUSTOMER]
+      parameters:
+        - name: parentCategoryId
+          in: query
+          description: Devuelve solo las subcategorías directas.
+          schema:
+            type: string
+            format: uuid
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Categorías.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryList'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+    post:
+      operationId: createCategory
+      summary: Crear una categoría
+      tags: [Categories]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryRequest'
+      responses:
+        '201':
+          description: Categoría creada.
+          headers:
+            Location:
+              $ref: 'common.yaml#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '409':
+          description: >-
+            La categoría padre no existe o está inactiva
+            (CATEGORY_INVALID_PARENT).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /categories/{categoryId}:
+    parameters:
+      - $ref: '#/components/parameters/CategoryId'
+    get:
+      operationId: getCategory
+      summary: Consultar una categoría
+      description: Con el rol CUSTOMER, una categoría inactiva responde 404.
+      tags: [Categories]
+      x-roles: [ADMIN, OPERATOR, CUSTOMER]
+      responses:
+        '200':
+          description: Categoría.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+    put:
+      operationId: updateCategory
+      summary: Modificar una categoría
+      tags: [Categories]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryRequest'
+      responses:
+        '200':
+          description: Categoría modificada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          description: >-
+            El padre crearía un ciclo (CATEGORY_HIERARCHY_CYCLE), o no existe o
+            está inactivo (CATEGORY_INVALID_PARENT).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /categories/{categoryId}/activate:
+    parameters:
+      - $ref: '#/components/parameters/CategoryId'
+    post:
+      operationId: activateCategory
+      summary: Activar una categoría
+      tags: [Categories]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Categoría activa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /categories/{categoryId}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/CategoryId'
+    post:
+      operationId: deactivateCategory
+      summary: Desactivar una categoría
+      description: Afecta solo al futuro. Los productos que ya la usan no cambian.
+      tags: [Categories]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Categoría inactiva.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /units-of-measure:
+    get:
+      operationId: listUnitsOfMeasure
+      summary: Listar unidades de medida
+      description: Devuelve todas las unidades, sin paginar.
+      tags: [UnitsOfMeasure]
+      x-roles: [ADMIN, OPERATOR]
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Unidades de medida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitOfMeasureList'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+    post:
+      operationId: createUnitOfMeasure
+      summary: Crear una unidad de medida
+      tags: [UnitsOfMeasure]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnitOfMeasureRequest'
+      responses:
+        '201':
+          description: Unidad de medida creada.
+          headers:
+            Location:
+              $ref: 'common.yaml#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitOfMeasure'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '409':
+          description: El código ya existe (UNIT_OF_MEASURE_CODE_ALREADY_EXISTS).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /units-of-measure/{unitOfMeasureId}:
+    parameters:
+      - $ref: '#/components/parameters/UnitOfMeasureId'
+    get:
+      operationId: getUnitOfMeasure
+      summary: Consultar una unidad de medida
+      tags: [UnitsOfMeasure]
+      x-roles: [ADMIN, OPERATOR]
+      responses:
+        '200':
+          description: Unidad de medida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitOfMeasure'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+    put:
+      operationId: updateUnitOfMeasure
+      summary: Modificar una unidad de medida
+      tags: [UnitsOfMeasure]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnitOfMeasureRequest'
+      responses:
+        '200':
+          description: Unidad de medida modificada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitOfMeasure'
+        '400':
+          $ref: 'common.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+        '409':
+          description: El código ya existe (UNIT_OF_MEASURE_CODE_ALREADY_EXISTS).
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Problem'
+
+  /units-of-measure/{unitOfMeasureId}/activate:
+    parameters:
+      - $ref: '#/components/parameters/UnitOfMeasureId'
+    post:
+      operationId: activateUnitOfMeasure
+      summary: Activar una unidad de medida
+      tags: [UnitsOfMeasure]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Unidad de medida activa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitOfMeasure'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+  /units-of-measure/{unitOfMeasureId}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/UnitOfMeasureId'
+    post:
+      operationId: deactivateUnitOfMeasure
+      summary: Desactivar una unidad de medida
+      description: Afecta solo al futuro. Los productos que ya la usan no cambian.
+      tags: [UnitsOfMeasure]
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Unidad de medida inactiva.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitOfMeasure'
+        '401':
+          $ref: 'common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: 'common.yaml#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: 'common.yaml#/components/securitySchemes/bearerAuth'
+
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CategoryId:
+      name: categoryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UnitOfMeasureId:
+      name: unitOfMeasureId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Sku:
+      type: string
+      description: Clave de negocio del producto. Única e inmutable.
+      minLength: 1
+      maxLength: 64
+      pattern: '^[A-Za-z0-9._-]+$'
+      examples: [LECHE-1L]
+
+    Product:
+      type: object
+      required: [id, sku, name, categoryId, unitOfMeasureId, unitOfMeasureCode, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku:
+          $ref: '#/components/schemas/Sku'
+        name:
+          type: string
+        description:
+          type: string
+        categoryId:
+          type: string
+          format: uuid
+        unitOfMeasureId:
+          type: string
+          format: uuid
+        unitOfMeasureCode:
+          type: string
+          description: Código de la unidad, para no consultarla aparte.
+          examples: [UND]
+        minimumStock:
+          allOf:
+            - $ref: 'common.yaml#/components/schemas/Quantity'
+          description: Se omite para el rol CUSTOMER.
+        active:
+          type: boolean
+
+    ProductPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        page:
+          $ref: 'common.yaml#/components/schemas/PageMetadata'
+
+    RegisterProductRequest:
+      type: object
+      required: [sku, name, categoryId, unitOfMeasureId, minimumStock]
+      properties:
+        sku:
+          $ref: '#/components/schemas/Sku'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 1000
+        categoryId:
+          type: string
+          format: uuid
+        unitOfMeasureId:
+          type: string
+          format: uuid
+        minimumStock:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+
+    UpdateProductRequest:
+      type: object
+      required: [name, categoryId, unitOfMeasureId]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 1000
+        categoryId:
+          type: string
+          format: uuid
+        unitOfMeasureId:
+          type: string
+          format: uuid
+
+    SetMinimumStockRequest:
+      type: object
+      required: [minimumStock]
+      properties:
+        minimumStock:
+          $ref: 'common.yaml#/components/schemas/Quantity'
+
+    Category:
+      type: object
+      required: [id, name, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        parentCategoryId:
+          type: string
+          format: uuid
+        active:
+          type: boolean
+
+    CategoryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Category'
+
+    CategoryRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        parentCategoryId:
+          type: string
+          format: uuid
+
+    UnitOfMeasure:
+      type: object
+      required: [id, code, name, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          examples: [KG]
+        name:
+          type: string
+          examples: [Kilogramo]
+        active:
+          type: boolean
+
+    UnitOfMeasureList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnitOfMeasure'
+
+    UnitOfMeasureRequest:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 10
+          pattern: '^[A-Z0-9]+$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50

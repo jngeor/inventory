@@ -19,11 +19,11 @@ Convención: la documentación de negocio (README, vision.md) se escribe en **es
 | Ubicación | `Location` |
 | Pedido | `Order` |
 | Ítem de Pedido | `OrderItem` |
-| Datos de contacto del cliente | `ContactInfo` |
+| Datos de contacto del destinatario del pedido | `ContactInfo` |
 | Dirección de entrega | `Address` (campo `shippingAddress`) |
 | Cancelación (datos) | `Cancellation` |
 | Devolución (datos) | `OrderReturn` |
-| Quién realiza una acción (cliente / administrador / sistema) | `Actor` |
+| Quién realiza una acción (cliente / operador / administrador / sistema) | `Actor` |
 | Kardex / Movimiento (entrada o salida) | `StockMovement` |
 | Alerta | `Alert` |
 | Incidencia | `Incident` |

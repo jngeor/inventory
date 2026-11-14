@@ -26,9 +26,9 @@ Conceptos de stock (ver `domain-model.md`, Inventario): **stock real** = existen
 * `PENDIENTE`: no hay stock disponible para todos los ítems; no se bloquea nada y se genera la alerta de stock faltante. **No se puede procesar.** Pasa a `RESERVADO` automáticamente cuando ingresa stock suficiente (Inventario reintenta la reserva, en orden de llegada).
 * `RESERVADO`: el stock de todos los ítems está bloqueado (sube el reservado; el real no cambia). **Es el único estado desde el que se puede procesar.**
 * `PROCESADO`: el pedido fue procesado (paso explícito, no automático). Recién aquí se descuenta el stock **real** y el **reservado**, generando la salida en el kardex.
-* `ENVIADO`: el pedido está en camino al cliente.
+* `ENVIADO`: el pedido está en camino al destinatario.
 * `ENTREGADO` (final): el pedido fue entregado; el stock no se repone.
-* `DEVUELTO` (final, auxiliar): solo alcanzable desde `ENTREGADO`; el cliente devuelve el pedido y se repone el stock real (entrada en el kardex).
+* `DEVUELTO` (final, auxiliar): solo alcanzable desde `ENTREGADO`; el destinatario devuelve el pedido y se repone el stock real (entrada en el kardex).
 * `CANCELADO` (final, auxiliar):
   * Desde `REGISTRADO`, `PENDIENTE` o `RESERVADO` (automático a las 48 horas sin procesar, o manual): se libera el stock reservado, si lo hubiera; el real no cambia.
   * Desde `PROCESADO` (manual, antes de enviar): como el stock real ya se descontó, se **repone** (entrada en el kardex).
@@ -86,7 +86,7 @@ Aplica íntegramente dentro del microservicio **Inventario** (ver 4.1). Los dem�
 | **Catálogo** | Maestro de productos: SKU, nombre, categoría, unidad de medida, stock mínimo configurado. | BD única (CRUD). |
 | **Inventario** | Guías de remisión, ubicaciones, traslados, kardex, bloqueo/liberación de stock, alertas de stock mínimo / movimiento inusual / stock insuficiente. | CQRS: BD escritura (PostgreSQL) + BD lectura (MongoDB) + outbox + relay (ver 3.1), por los reportes de kardex. |
 | **Órdenes** | Máquina de estados del pedido (2.1), scheduler de 48h, registro de incidencias (cancelaciones/devoluciones con motivo). | BD única + tabla outbox (para publicar eventos de pedido de forma confiable). |
-| **Notificaciones** | Consume cambios de estado del pedido y notifica al cliente por SMS/email. | BD pequeña: registro de notificaciones enviadas (idempotencia y auditoría). |
+| **Notificaciones** | Consume cambios de estado del pedido y notifica al destinatario por SMS/email. | BD pequeña: registro de notificaciones enviadas (idempotencia y auditoría). |
 
 Catálogo se consulta de forma **síncrona** (REST, con circuit breaker + retries) desde Inventario y Órdenes cuando necesitan datos de producto — no participa del flujo asíncrono de stock.
 
@@ -94,7 +94,7 @@ Catálogo se consulta de forma **síncrona** (REST, con circuit breaker + retrie
 
 Como el pedido se registra siempre, haya o no stock (sección 2), la verificación de stock entre Órdenes e Inventario es **asíncrona y coreografiada por eventos** — no hay llamada síncrona ni se bloquea la respuesta al cliente esperando la verificación:
 
-1. Cliente registra pedido → **Órdenes** lo guarda en `REGISTRADO` y publica (vía su outbox) el evento `PedidoRegistrado`.
+1. Un cliente o un operador registra el pedido → **Órdenes** lo guarda en `REGISTRADO` y publica (vía su outbox) el evento `PedidoRegistrado`.
 2. **Inventario** consume `PedidoRegistrado` e intenta reservar el stock (todo o nada, sobre el stock disponible):
    * Hay stock disponible para todos los ítems → lo reserva y publica `StockReservado`.
    * Falta stock de algún ítem → no reserva nada, deja la reserva en espera, dispara la alerta "solicitud de pedido sin stock" y publica `StockInsuficiente`.
@@ -114,7 +114,8 @@ Como el pedido se registra siempre, haya o no stock (sección 2), la verificaci�
 
 ```mermaid
 flowchart TB
-    Cliente[Cliente]
+    Usuario["Cliente, operador o administrador"]
+    Destinatario[Destinatario]
     GW["API Gateway (Spring Cloud Gateway)"]
     KC[("Keycloak<br/>OAuth2 / OIDC")]
     KAFKA{{"Kafka"}}
@@ -127,11 +128,12 @@ flowchart TB
         NOTIF["Notificaciones"]
     end
 
-    Cliente -->|HTTPS + token OIDC| GW
-    GW -. valida token .-> KC
+    Usuario -->|HTTPS + token OIDC| GW
+    MS -. valida token .-> KC
     GW --> CAT
     GW --> INV
     GW --> ORD
+    GW --> NOTIF
 
     ORD -->|REST + circuit breaker| CAT
     INV -->|REST + circuit breaker| CAT
@@ -141,7 +143,7 @@ flowchart TB
     INV -- "StockReservado / StockInsuficiente" --> KAFKA
     KAFKA -- "StockReservado / StockInsuficiente" --> ORD
     KAFKA -- "cambios de estado del pedido" --> NOTIF
-    NOTIF -->|SMS / email| Cliente
+    NOTIF -->|SMS / email| Destinatario
 ```
 
 ### 4.5 Diagrama detallado: CQRS dentro de Inventario

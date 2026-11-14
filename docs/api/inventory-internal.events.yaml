@@ -1,0 +1,321 @@
+asyncapi: 3.0.0
+info:
+  title: Eventos internos de Inventario
+  version: 1.0.0
+  description: >-
+    Eventos del CQRS de Inventario hacia su propio lado de lectura. No son
+    parte del lenguaje publicado: pueden cambiar sin coordinar con otros
+    servicios (ADR-0004), pero siguen las mismas reglas de formato (ADR-0024).
+    Cada evento se puede aplicar dos veces sin dañar la proyección (ADR-0007,
+    ADR-0025). Solo hay eventos que alimentan un modelo de lectura.
+defaultContentType: application/json
+
+channels:
+  internalEvents:
+    address: inventory.internal.events
+    description: >-
+      Un solo topic para conservar el orden por producto (ADR-0008). Los eventos
+      de stock usan productId como clave; los demás, el id de su agregado.
+    messages:
+      StockMovementRecorded:
+        $ref: '#/components/messages/StockMovementRecorded'
+      ProductStockChanged:
+        $ref: '#/components/messages/ProductStockChanged'
+      AlertRaised:
+        $ref: '#/components/messages/AlertRaised'
+      AlertStatusChanged:
+        $ref: '#/components/messages/AlertStatusChanged'
+
+operations:
+  publishInternalEvents:
+    action: send
+    summary: El lado de escritura publica sus cambios, vía outbox y Debezium.
+    channel:
+      $ref: '#/channels/internalEvents'
+    messages:
+      - $ref: '#/channels/internalEvents/messages/StockMovementRecorded'
+      - $ref: '#/channels/internalEvents/messages/ProductStockChanged'
+      - $ref: '#/channels/internalEvents/messages/AlertRaised'
+      - $ref: '#/channels/internalEvents/messages/AlertStatusChanged'
+  projectInternalEvents:
+    action: receive
+    summary: El proyector de Inventario aplica los eventos en la BD de lectura.
+    channel:
+      $ref: '#/channels/internalEvents'
+
+components:
+  messageTraits:
+    ByProduct:
+      contentType: application/json
+      headers:
+        $ref: 'events-common.yaml#/components/schemas/EventHeaders'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: productId (ADR-0008).
+          bindingVersion: 0.5.0
+    ByAggregate:
+      contentType: application/json
+      headers:
+        $ref: 'events-common.yaml#/components/schemas/EventHeaders'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: Id del agregado que publica el evento.
+          bindingVersion: 0.5.0
+
+  messages:
+    StockMovementRecorded:
+      name: StockMovementRecorded
+      title: Movimiento de kardex registrado
+      description: >-
+        Lleva el saldo acumulado del producto, calculado en el lado de
+        escritura. El proyector inserta el KardexEntry con movementId como _id.
+      traits:
+        - $ref: '#/components/messageTraits/ByProduct'
+      payload:
+        $ref: '#/components/schemas/StockMovementRecordedEvent'
+      examples:
+        - name: ingresoPorGuia
+          payload:
+            eventId: a12f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: StockMovementRecorded
+            occurredAt: '2026-11-07T14:00:00Z'
+            data:
+              movementId: b23f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+              productId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              sequence: 41
+              type: INBOUND
+              quantity: 50
+              balance: 62
+              documentDate: '2026-11-06T00:00:00Z'
+              createdAt: '2026-11-07T14:00:00Z'
+              source:
+                sourceType: DELIVERY_NOTE
+                sourceId: c34f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+              unusual: false
+
+    ProductStockChanged:
+      name: ProductStockChanged
+      title: Stock de un producto cambiado
+      description: >-
+        Lleva valores absolutos, no diferencias: el proyector los reemplaza.
+        También se publica al reservar o liberar, aunque no haya movimiento.
+      traits:
+        - $ref: '#/components/messageTraits/ByProduct'
+      payload:
+        $ref: '#/components/schemas/ProductStockChangedEvent'
+      examples:
+        - name: trasReservar
+          payload:
+            eventId: d45f3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: ProductStockChanged
+            occurredAt: '2026-11-07T15:30:01Z'
+            data:
+              productId: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              sequence: 42
+              physicalStock: 62
+              reservedStock: 2
+
+
+
+    AlertRaised:
+      name: AlertRaised
+      title: Alerta generada
+      traits:
+        - $ref: '#/components/messageTraits/ByAggregate'
+      payload:
+        $ref: '#/components/schemas/AlertRaisedEvent'
+      examples:
+        - name: stockMinimo
+          payload:
+            eventId: 29af3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: AlertRaised
+            occurredAt: '2026-11-07T16:10:00Z'
+            data:
+              alertId: 3abf3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+              type: MINIMUM_STOCK
+              reference: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              message: Leche entera 1 L bajo el stock mínimo
+              status: ACTIVE
+              createdAt: '2026-11-07T16:10:00Z'
+
+    AlertStatusChanged:
+      name: AlertStatusChanged
+      title: Estado de alerta cambiado
+      description: Lleva el estado nuevo, no la transición.
+      traits:
+        - $ref: '#/components/messageTraits/ByAggregate'
+      payload:
+        $ref: '#/components/schemas/AlertStatusChangedEvent'
+      examples:
+        - name: vista
+          payload:
+            eventId: 4bcf3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+            eventType: AlertStatusChanged
+            occurredAt: '2026-11-07T16:30:00Z'
+            data:
+              alertId: 3abf3c52-6f1e-4c7b-9a64-1d2c3e4f5a6b
+              status: ACKNOWLEDGED
+              changedAt: '2026-11-07T16:30:00Z'
+
+
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+
+    Quantity:
+      type: integer
+      format: int64
+      minimum: 0
+
+    PositiveQuantity:
+      type: integer
+      format: int64
+      minimum: 1
+
+    Sequence:
+      type: integer
+      format: int64
+      minimum: 1
+      description: >-
+        Número de cambio del producto, asignado por el lado de escritura y
+        compartido por los eventos de stock. Sube de 1 en 1. El proyector
+        descarta un valor que ya aplicó y marca outOfSync si detecta un hueco
+        (ADR-0025).
+
+    StockMovementRecordedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: StockMovementRecorded
+            data:
+              type: object
+              required: [movementId, productId, sequence, type, quantity, balance, documentDate, createdAt, source, unusual]
+              properties:
+                movementId:
+                  $ref: '#/components/schemas/Uuid'
+                productId:
+                  $ref: '#/components/schemas/Uuid'
+                sequence:
+                  $ref: '#/components/schemas/Sequence'
+                locationId:
+                  $ref: '#/components/schemas/Uuid'
+                type:
+                  type: string
+                  enum:
+                    - INBOUND
+                    - OUTBOUND
+                    - RETURN
+                    - CANCELLATION
+                    - TRANSFER_OUT
+                    - TRANSFER_IN
+                    - ADJUSTMENT_IN
+                    - ADJUSTMENT_OUT
+                quantity:
+                  $ref: '#/components/schemas/PositiveQuantity'
+                balance:
+                  allOf:
+                    - $ref: '#/components/schemas/Quantity'
+                  description: Saldo acumulado del producto después del movimiento.
+                documentDate:
+                  type: string
+                  format: date-time
+                createdAt:
+                  type: string
+                  format: date-time
+                source:
+                  type: object
+                  required: [sourceType, sourceId]
+                  properties:
+                    sourceType:
+                      type: string
+                      enum: [DELIVERY_NOTE, ORDER, STOCK_TRANSFER, STOCK_ADJUSTMENT]
+                    sourceId:
+                      $ref: '#/components/schemas/Uuid'
+                unusual:
+                  type: boolean
+
+    ProductStockChangedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: ProductStockChanged
+            data:
+              type: object
+              required: [productId, sequence, physicalStock, reservedStock]
+              properties:
+                productId:
+                  $ref: '#/components/schemas/Uuid'
+                sequence:
+                  $ref: '#/components/schemas/Sequence'
+                physicalStock:
+                  $ref: '#/components/schemas/Quantity'
+                reservedStock:
+                  $ref: '#/components/schemas/Quantity'
+
+    AlertType:
+      type: string
+      enum:
+        - MINIMUM_STOCK
+        - UNUSUAL_MOVEMENT
+        - INSUFFICIENT_STOCK
+        - SYNC_FAILURE
+        - STOCK_ADJUSTMENT
+
+    AlertStatus:
+      type: string
+      enum: [ACTIVE, ACKNOWLEDGED, RESOLVED]
+
+    AlertRaisedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: AlertRaised
+            data:
+              type: object
+              required: [alertId, type, reference, message, status, createdAt]
+              properties:
+                alertId:
+                  $ref: '#/components/schemas/Uuid'
+                type:
+                  $ref: '#/components/schemas/AlertType'
+                reference:
+                  type: string
+                message:
+                  type: string
+                status:
+                  $ref: '#/components/schemas/AlertStatus'
+                createdAt:
+                  type: string
+                  format: date-time
+
+    AlertStatusChangedEvent:
+      allOf:
+        - $ref: 'events-common.yaml#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: AlertStatusChanged
+            data:
+              type: object
+              required: [alertId, status, changedAt]
+              properties:
+                alertId:
+                  $ref: '#/components/schemas/Uuid'
+                status:
+                  $ref: '#/components/schemas/AlertStatus'
+                changedAt:
+                  type: string
+                  format: date-time

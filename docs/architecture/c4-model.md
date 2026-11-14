@@ -32,8 +32,10 @@ Las flechas indican quién inicia la comunicación. Las líneas punteadas son as
 
 ```mermaid
 flowchart TB
-    CLI(["<b>Cliente</b><br/>Registra pedidos, los cancela<br/>y recibe avisos de su estado"]):::person
-    ADM(["<b>Administrador</b><br/>Gestiona catálogo, inventario y pedidos;<br/>revisa kardex y alertas"]):::person
+    CLI(["<b>Cliente</b><br/>Registra sus pedidos<br/>y los cancela"]):::person
+    OPE(["<b>Operador</b><br/>Registra guías, traslados y pedidos;<br/>avanza los pedidos. No ajusta stock"]):::person
+    ADM(["<b>Administrador</b><br/>Gestiona catálogo, ubicaciones y ajustes;<br/>revisa kardex y alertas"]):::person
+    DEST(["<b>Destinatario</b><br/>Recibe el pedido y sus avisos.<br/>Puede no tener cuenta"]):::person
 
     SYS["<b>Sistema de Gestión de Inventario</b><br/>(ProyectoKoala)<br/>Catálogo, stock y kardex, ciclo de vida<br/>de pedidos, alertas y notificaciones"]:::internal
 
@@ -42,14 +44,16 @@ flowchart TB
     SMS["<b>Proveedor de SMS</b><br/>(hoy simulado: solo log)"]:::external
 
     CLI -- "Usa la API<br/>[HTTPS + token]" --> SYS
+    OPE -- "Usa la API<br/>[HTTPS + token]" --> SYS
     ADM -- "Usa la API / panel de alertas<br/>[HTTPS + token]" --> SYS
     CLI -. "Inicia sesión" .-> KC
+    OPE -. "Inicia sesión" .-> KC
     ADM -. "Inicia sesión" .-> KC
     SYS -- "Valida tokens<br/>[OIDC / JWKS]" --> KC
     SYS -- "Envía emails<br/>[SMTP]" --> MAIL
     SYS -- "Envía SMS" --> SMS
-    MAIL -. "Email" .-> CLI
-    SMS -. "SMS" .-> CLI
+    MAIL -. "Email" .-> DEST
+    SMS -. "SMS" .-> DEST
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef internal fill:#1168bd,stroke:#0b4884,color:#fff
@@ -58,8 +62,10 @@ flowchart TB
 
 | Elemento | Tipo | Descripción |
 |---|---|---|
-| Cliente | Persona | Registra y cancela sus pedidos (antes de procesarlos) y recibe avisos por email y/o SMS. Hoy usa la API directamente; su frontend está fuera de alcance (`docs/vision.md` 3). |
+| Cliente | Persona | Registra y cancela sus pedidos (antes de procesarlos). Hoy usa la API directamente; su frontend está fuera de alcance (`docs/vision.md` 3). |
 | Administrador | Persona | Gestiona catálogo, guías de remisión, ubicaciones y traslados; avanza los pedidos (procesar, enviar, entregar, devolver); consulta el kardex y las alertas. El panel de administrador es un frontend a futuro. |
+| Operador | Persona | Opera el día a día: registra guías, traslados y pedidos, y avanza los pedidos. No ajusta stock (ADR-0023). |
+| Destinatario | Persona | Recibe el pedido y sus avisos por email y/o SMS. Puede ser el mismo cliente o alguien sin cuenta en el sistema (ADR-0023). |
 | Sistema de Gestión de Inventario | Sistema propio | Lo que se construye en este repo. Se abre en el nivel 2. |
 | Keycloak | Externo | Emite los tokens y define los roles. Se despliega junto al sistema, pero no se desarrolla: se usa tal cual (context-map R5). |
 | Proveedor de email | Externo | Hoy Mailpit, un servidor SMTP de pruebas en Docker Compose; un proveedor real se agrega como adaptador (quality-attributes M2). |
@@ -67,7 +73,7 @@ flowchart TB
 
 **Fuera del sistema a propósito**: pasarela de pagos y facturación electrónica real. El documento de compra de una guía se registra, pero no se valida contra un ente externo (`docs/vision.md` 3).
 
-**Más roles a futuro** (ej. almacenero, operador logístico): se agregan como roles en Keycloak y no cambian este diagrama.
+**Más roles a futuro** (ej. almacenero): se agregan como roles en Keycloak y no cambian este diagrama. **Pedidos desde otros sistemas**: están previstos a futuro, con un token de servicio (ADR-0023).
 
 ---
 
@@ -80,7 +86,9 @@ Por legibilidad, el nivel 2 se muestra en dos vistas del mismo conjunto de conte
 ```mermaid
 flowchart TB
     CLI(["Cliente"]):::person
+    OPE(["Operador"]):::person
     ADM(["Administrador"]):::person
+    DEST(["Destinatario"]):::person
     KC["<b>Keycloak</b><br/>[Contenedor]<br/>Identidad, tokens y roles"]:::external
     MAIL["<b>Mailpit</b><br/>[SMTP de pruebas]"]:::external
 
@@ -97,7 +105,7 @@ flowchart TB
         ORD["<b>Órdenes</b><br/>[Java 21, Spring Boot WebFlux]<br/>Ciclo de vida del pedido,<br/>expiración 48 h, incidencias, alertas"]:::internal
         ORDDB[("<b>BD Órdenes</b><br/>[PostgreSQL]<br/>+ outbox + ShedLock<br/>+ replicación lógica")]:::db
 
-        NOT["<b>Notificaciones</b><br/>[Java 21, Spring Boot WebFlux]<br/>Avisos al cliente por email / SMS"]:::internal
+        NOT["<b>Notificaciones</b><br/>[Java 21, Spring Boot WebFlux]<br/>Avisos al destinatario por email / SMS"]:::internal
         NOTDB[("<b>BD Notificaciones</b><br/>[PostgreSQL]<br/>registro de envíos")]:::db
 
         KCON["<b>Kafka Connect + Debezium</b><br/>[Contenedor]<br/>Outbox Event Router (CDC)"]:::internal
@@ -105,11 +113,12 @@ flowchart TB
     end
 
     CLI -- "HTTPS + JWT" --> GW
+    OPE -- "HTTPS + JWT" --> GW
     ADM -- "HTTPS + JWT" --> GW
     GW -- "/catalog" --> CAT
     GW -- "/inventory" --> INV
     GW -- "/orders" --> ORD
-    GW -- "/notifications<br/>(solo administrador)" --> NOT
+    GW -- "/notifications<br/>(operador y administrador)" --> NOT
 
     CAT --> CATDB
     INV -- "comandos + outbox" --> INVW
@@ -129,7 +138,9 @@ flowchart TB
     KAFKA -. "eventos internos CQRS<br/>(proyecta a BD lectura)" .-> INV
 
     NOT -- "SMTP" --> MAIL
+    MAIL -. "Email" .-> DEST
     CAT & INV & ORD & NOT -. "valida JWT (JWKS)" .-> KC
+    INV & ORD -. "pide token de servicio" .-> KC
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef internal fill:#1168bd,stroke:#0b4884,color:#fff
@@ -141,7 +152,7 @@ flowchart TB
 
 * **Cada servicio tiene su propia BD**, y nadie lee la BD de otro (context-map, regla 1).
 * **Los servicios nunca publican directo a Kafka**: escriben el evento en su outbox, en la misma transacción que el cambio. Debezium lo lee del WAL y lo publica. Por eso las dos BD con outbox requieren replicación lógica.
-* **Órdenes e Inventario no se llaman entre sí**: solo se hablan por Kafka (la saga, README 4.2). La única dependencia síncrona es hacia Catálogo, protegida con Resilience4j.
+* **Órdenes e Inventario no se llaman entre sí**: solo se hablan por Kafka (la saga, README 4.2). La única dependencia síncrona es hacia Catálogo, protegida con Resilience4j y con su propio token de servicio (ADR-0022).
 * **El lado de lectura de Inventario** es el mismo servicio, consumiendo sus propios eventos internos para proyectar la BD de lectura (README 3.1).
 * **El SMS no aparece como contenedor** porque hoy es un adaptador dentro de Notificaciones que solo escribe en el log.
 
@@ -193,7 +204,7 @@ flowchart LR
 | Catálogo | Java 21, Spring Boot, WebFlux | Maestro de productos, categorías y unidades de medida. No consume eventos ni llama a nadie. | BD Catálogo |
 | Inventario | Java 21, Spring Boot, WebFlux | Guías, ubicaciones, traslados, reservas, kardex, alertas. Único con CQRS. | BD escritura (PostgreSQL) + BD lectura (MongoDB) |
 | Órdenes | Java 21, Spring Boot, WebFlux | Ciclo de vida del pedido, expiración, incidencias, alertas `ORDER_CANCELLED`. | BD Órdenes |
-| Notificaciones | Java 21, Spring Boot, WebFlux | Consume eventos de pedido y avisa al cliente; consulta de envíos para el administrador. | BD Notificaciones |
+| Notificaciones | Java 21, Spring Boot, WebFlux | Consume eventos de pedido y avisa al destinatario; consulta de envíos para operador y administrador. | BD Notificaciones |
 | BD por servicio | PostgreSQL | Todas las BD transaccionales: Catálogo, Inventario escritura, Órdenes y Notificaciones. Una base y un usuario por servicio, nunca compartidos; la instancia depende del entorno (ADR-0003). Las de Inventario escritura y Órdenes tienen replicación lógica para Debezium. | — |
 | BD de lectura de Inventario | MongoDB | Modelos de lectura del CQRS (`KardexEntry`, `ProductStockView`, `ActiveAlertView`) como documentos listos para consultar, más el log de idempotencia del proyector. Solo la escribe el proyector de Inventario. | Proyecciones |
 | Kafka | Apache Kafka | Topics de eventos entre servicios, topic interno del CQRS de Inventario (`inventory.internal.events`) y sus `.DLT`. | Eventos |
@@ -215,6 +226,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     CLI(["Cliente"]):::person
+    OPE(["Operador"]):::person
     ADM(["Administrador"]):::person
     KIN{{"Kafka<br/>inventory.reservation.events"}}:::external
 
@@ -223,8 +235,8 @@ flowchart LR
 
         subgraph IN["Adaptadores de entrada"]
             direction TB
-            WEBC["<b>CustomerOrderController</b><br/>[WebFlux REST]"]:::adapter
-            WEBA["<b>AdminOrderController</b><br/>[WebFlux REST]"]:::adapter
+            WEBC["<b>OrderController</b><br/>[WebFlux REST]"]:::adapter
+            WEBA["<b>OrderOperationsController</b><br/>[WebFlux REST]"]:::adapter
             WEBAL["<b>AlertController</b><br/>[WebFlux REST]"]:::adapter
             KCONS["<b>StockEventsConsumer</b><br/>[Spring Kafka]<br/>reintentos acotados + DLT"]:::adapter
             SCHED["<b>ExpirationScheduler</b><br/>[@Scheduled + ShedLock]"]:::adapter
@@ -234,8 +246,8 @@ flowchart LR
             direction TB
             subgraph PIN["Puertos de entrada (casos de uso)"]
                 direction TB
-                UC1["RegisterOrder · CancelOrder<br/>GetOrder · ListMyOrders"]:::port
-                UC2["ProcessOrder · ShipOrder<br/>DeliverOrder · ReturnOrder<br/>ListOrders · ListIncidents"]:::port
+                UC1["RegisterOrder · CancelOrder<br/>GetOrder · ListMyOrders · ListOrders"]:::port
+                UC2["ProcessOrder · ShipOrder<br/>DeliverOrder · ReturnOrder<br/>ListIncidents"]:::port
                 UC3["AcknowledgeAlert · ResolveAlert<br/>ListActiveAlerts"]:::port
                 UC4["MarkOrderReserved<br/>MarkOrderPending"]:::port
                 UC5["ExpireOrders"]:::port
@@ -271,6 +283,10 @@ flowchart LR
     DBZ["Debezium<br/>→ orders.order.events"]:::external
 
     CLI --> WEBC
+    OPE --> WEBC
+    OPE --> WEBA
+    OPE --> WEBAL
+    ADM --> WEBC
     ADM --> WEBA
     ADM --> WEBAL
     KIN -.-> KCONS
@@ -311,8 +327,8 @@ Cómo leerlo: los adaptadores de entrada llaman a los puertos de entrada; los se
 
 | Componente | Capa | Responsabilidad |
 |---|---|---|
-| `CustomerOrderController` | Adaptador de entrada | API del cliente: registrar, cancelar, consultar y listar sus pedidos. Toma el `customerId` del `sub` del token. Si el pedido es de otro cliente, responde 404 (quality-attributes S2). |
-| `AdminOrderController` | Adaptador de entrada | API del administrador: procesar, enviar, entregar, cancelar (también desde `PROCESSED`), devolver, listar pedidos e incidencias. Requiere el rol de administrador. |
+| `OrderController` | Adaptador de entrada | API de cliente, operador y administrador: registrar, cancelar, consultar y listar pedidos. Si registra un cliente, toma el `customerId` del `sub` del token. Para un cliente, un pedido ajeno responde 404 (quality-attributes S2). |
+| `OrderOperationsController` | Adaptador de entrada | API de operación: procesar, enviar, entregar, devolver y listar incidencias. Requiere el rol de operador o de administrador, según la acción (ADR-0023). |
 | `AlertController` | Adaptador de entrada | Endpoint de alertas activas de Órdenes, que consume el panel (context-map R7). |
 | `StockEventsConsumer` | Adaptador de entrada | Consume `StockReserved`/`StockInsufficient`; descarta duplicados por `eventId` y los eventos que llegan con el pedido en un estado incompatible (`domain-model.md`, Órdenes). 3 reintentos y luego la DLT (README 5.1). |
 | `ExpirationScheduler` | Adaptador de entrada | Dispara `ExpireOrders` periódicamente; ShedLock asegura que corra en una sola instancia. |
@@ -333,8 +349,8 @@ Cómo leerlo: los adaptadores de entrada llaman a los puertos de entrada; los se
 ```mermaid
 sequenceDiagram
     autonumber
-    actor C as Cliente
-    participant W as CustomerOrderController
+    actor C as Cliente u operador
+    participant W as OrderController
     participant S as RegisterOrder (servicio)
     participant PC as ProductCatalog → CatalogRestClient
     participant O as Order (dominio)
@@ -343,8 +359,8 @@ sequenceDiagram
     participant DB as BD Órdenes
     participant DZ as Debezium / Kafka
 
-    C->>W: POST /orders (JWT)
-    W->>S: register(customerId = sub, contacto, dirección, ítems)
+    C->>W: POST /orders (JWT, Idempotency-Key opcional)
+    W->>S: register(actor del token, contacto, dirección, ítems)
     S->>PC: productos activos + snapshot
     PC-->>S: sku, nombre, unidad (traducidos por la ACL)
     S->>O: Order.register(...) → REGISTERED, expiresAt

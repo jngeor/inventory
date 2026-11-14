@@ -19,7 +19,7 @@ Un sistema de gestión de inventario basado en microservicios que sea:
 * Catálogo de productos.
 * Inventario: guías de remisión, ubicaciones, traslados, kardex, bloqueo/liberación de stock.
 * Pedidos: registro, verificación asíncrona de stock, procesamiento, envío, entrega, cancelación (automática a 48h o manual), devolución.
-* Notificaciones al cliente (SMS/email) ante cambios de estado del pedido.
+* Notificaciones al destinatario del pedido (SMS/email) ante cambios de estado del pedido.
 * Alertas operativas para el administrador: stock mínimo, movimiento inusual, stock insuficiente, pedido cancelado, fallo de sincronización, ajuste de stock.
 * Seguridad (Keycloak/OAuth2), trazabilidad (OpenTelemetry), logs centralizados, métricas (Prometheus/Grafana), resiliencia (circuit breaker, retries, DLQ), testing (Testcontainers, ArchUnit, contract tests), CI (GitHub Actions) y despliegue (Docker Compose, Kubernetes local).
 
@@ -31,9 +31,12 @@ Un sistema de gestión de inventario basado en microservicios que sea:
 
 ## 4. Usuarios / Stakeholders
 
-El modelo de usuarios es **abierto/extensible**: hoy se identifican 2 roles, pero se espera que aparezcan más a medida que se defina el sistema de seguridad (Keycloak, sección 5) con sus roles y permisos.
+El modelo de usuarios es **abierto/extensible**: hoy se identifican 3 roles, pero se espera que aparezcan más a medida que se defina el sistema de seguridad (Keycloak, sección 5) con sus roles y permisos.
+
+El sistema no es necesariamente un e-commerce: también puede administrar un dark store. Por eso el usuario que opera y el destinatario del pedido son distintos (ADR-0023).
 
 * **Administrador**: gestiona catálogo e inventario, ve el panel de alertas urgentes y los reportes de kardex.
+* **Operador**: opera el día a día: registra guías, traslados y pedidos, y avanza los pedidos. No ajusta stock.
 * **Cliente**: registra pedidos y recibe notificaciones de su estado.
 * *(futuros roles a definir junto con el modelo de permisos de Keycloak — ej. almacenero, operador logístico, etc.)*
 

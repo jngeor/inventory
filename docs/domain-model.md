@@ -50,11 +50,13 @@ Microservicio con BD única (CRUD), sin CQRS.
 
 `Product` referencia a `Category` y a `UnitOfMeasure` solo por id (son agregados independientes, con su propio ciclo de vida administrado por separado). `Category` se referencia a sí misma vía `parentCategoryId` para la jerarquía.
 
+**Desactivar afecta solo al futuro** (decidido 2026-11-07): desactivar una categoría o una unidad de medida no cambia lo ya registrado. Los productos que ya la usan siguen funcionando y se pueden modificar conservándola, pero no se puede asignar a un producto nuevo ni a uno que cambie a ella.
+
 ### Casos de uso (capa `application`)
 
-* **Product**: `RegisterProduct`, `UpdateProduct`, `SetMinimumStock`, `ActivateProduct`, `DeactivateProduct`, `GetProduct`, `GetProductBySku`, `ListProducts`.
-* **Category**: `CreateCategory`, `UpdateCategory`, `ActivateCategory`, `DeactivateCategory`, `ListCategories` (como árbol, dado `parentCategoryId`).
-* **UnitOfMeasure**: `CreateUnitOfMeasure`, `UpdateUnitOfMeasure`, `ActivateUnitOfMeasure`, `DeactivateUnitOfMeasure`, `ListUnitsOfMeasure`.
+* **Product**: `RegisterProduct`, `UpdateProduct`, `SetMinimumStock`, `ActivateProduct`, `DeactivateProduct`, `GetProduct`, `GetProductBySku`, `ListProducts` (también por una lista de ids).
+* **Category**: `CreateCategory`, `UpdateCategory`, `ActivateCategory`, `DeactivateCategory`, `GetCategory`, `ListCategories` (lista plana; la jerarquía se arma con `parentCategoryId`).
+* **UnitOfMeasure**: `CreateUnitOfMeasure`, `UpdateUnitOfMeasure`, `ActivateUnitOfMeasure`, `DeactivateUnitOfMeasure`, `GetUnitOfMeasure`, `ListUnitsOfMeasure`.
 
 ### Eventos de dominio
 
@@ -69,6 +71,7 @@ Microservicio con **CQRS completo** (BD escritura + BD lectura + outbox + Debezi
 * **Stock por producto (total)**: todas las validaciones de cantidad (reserva, stock mínimo, stock insuficiente) se hacen sobre el total del producto, sin importar la ubicación.
 * **Ubicación referencial y opcional**: `locationId` es opcional en los movimientos y no interviene en ninguna validación. Sirve para representar subalmacenes; si más adelante pasa a ser obligatoria, basta con volver requerido el campo, sin rehacer el modelo ni migrar datos.
 * **Stock real, reservado y disponible**: se almacenan el stock **real** (físico) y el **reservado**; el **disponible** = real − reservado se calcula. Las reservas se validan contra el disponible.
+* **Cantidades enteras** (decidido 2026-11-07): `Quantity` no admite decimales en ningún servicio. Se expresa en la unidad de medida del producto.
 * **Reserva todo o nada**: si falta stock de algún ítem del pedido, no se reserva nada y el pedido queda `PENDING` en Órdenes (no se puede procesar).
 * **El stock real baja al procesar el pedido** (`OrderProcessed`), no al reservar ni al enviar: en ese momento se descuentan el real y el reservado, y se genera la salida en el kardex.
 * **El ingreso aumenta el stock al registrar la guía de remisión**; asignar ubicación es un paso aparte que no cambia cantidades (se modela como un traslado, ver `StockTransfer`).
@@ -85,6 +88,7 @@ Saldo de stock de un producto. Es la única fuente de verdad para las validacion
 | `physicalStock` | `Quantity` | Stock **real** (existencia física). ≥ 0. |
 | `reservedStock` | `Quantity` | Stock bloqueado por pedidos (suma de las `StockReservation` `ACTIVE` del producto). ≥ 0. |
 | `version` | `long` | Bloqueo optimista: evita que dos reservas concurrentes sobre el mismo producto reserven más de lo disponible. |
+| `sequence` | `long` | Número de cambio del producto: sube de 1 en 1 con cada evento de stock, también en los traslados. El proyector lo usa para descartar repetidos y detectar huecos (ADR-0025). |
 
 `availableStock()` = `physicalStock − reservedStock`. Se calcula y no se almacena.
 
@@ -233,7 +237,7 @@ Se exponen por el endpoint de "alertas activas" de Inventario (`docs/README.md` 
 * `MINIMUM_STOCK`: se genera cuando, tras una operación, el stock real (`physicalStock`) queda por debajo del `minimumStock` del producto (consultado a Catálogo). No se duplica mientras ya exista una alerta `ACTIVE` para ese producto, y se resuelve sola cuando el stock vuelve a superar el mínimo.
 * `UNUSUAL_MOVEMENT`: una por cada `StockMovement` con `unusual = true`.
 * `INSUFFICIENT_STOCK`: una por cada reserva que queda en `PENDING`.
-* `SYNC_FAILURE`: fallos de sincronización CQRS (`docs/README.md` 3.1). Lleva el `productId` afectado (si lo hay) y la referencia al evento en la DLQ. Plazo de resolución: 24 h; se resuelve tras reprocesar el evento y reconstruir la proyección del producto.
+* `SYNC_FAILURE`: fallos de sincronización CQRS (`docs/README.md` 3.1). Lleva el `productId` afectado (si lo hay) y la referencia al evento en la DLQ. Plazo de resolución: 24 h; se resuelve tras reprocesar el evento y reconstruir la proyección del producto. No se puede resolver mientras el producto siga `outOfSync` (decidido 2026-11-07).
 * `STOCK_ADJUSTMENT`: una por cada `StockAdjustment`, porque un ajuste es la vía con la que se podría encubrir un robo o una pérdida.
 
 ### Relaciones entre agregados
@@ -245,12 +249,12 @@ Varios agregados cambian en una misma transacción (ej. `DeliveryNote` + `StockM
 ### Casos de uso (capa `application`)
 
 * **Ingresos**: `RegisterDeliveryNote`, `GetDeliveryNote`, `ListDeliveryNotes`.
-* **Ubicaciones**: `CreateLocation`, `UpdateLocation`, `ActivateLocation`, `DeactivateLocation`, `ListLocations` (como árbol).
-* **Traslados**: `TransferStock` (también cubre "asignar ubicación", con `fromLocationId` vacío).
+* **Ubicaciones**: `CreateLocation`, `UpdateLocation`, `ActivateLocation`, `DeactivateLocation`, `GetLocation`, `ListLocations` (lista plana; la jerarquía se arma con `parentLocationId`).
+* **Traslados**: `TransferStock` (también cubre "asignar ubicación", con `fromLocationId` vacío), `GetStockTransfer`.
 * **Ajustes**: `AdjustStock` (solo administrador), `GetStockAdjustment`, `ListStockAdjustments`.
 * **Reservas (disparados por eventos de Órdenes)**: `ReserveStockForOrder` (← `OrderRegistered`), `ConsumeReservation` (← `OrderProcessed`), `HandleOrderCancellation` (← `OrderCancelled`: libera la reserva si el pedido no estaba procesado, o repone el stock real con un `CANCELLATION` si ya lo estaba), `RestockReturnedOrder` (← `OrderReturned`: `StockMovement` `RETURN` + `ProductStock.increase`), `RetryPendingReservations` (interno, tras cada ingreso).
 * **Alertas**: `AcknowledgeAlert`, `ResolveAlert`, `ListActiveAlerts`.
-* **Consultas (lado lectura)**: `GetProductStock`, `GetKardex` (por producto y rango de fechas, con filtro opcional por ubicación).
+* **Consultas (lado lectura)**: `GetProductStock`, `GetKardex` (por producto y rango de fechas, con filtro opcional por ubicación), `GetInventoryReport` (productos con algún ingreso, con filtro por stock disponible; SKU, nombre y unidad se consultan a Catálogo).
 
 ### Eventos
 
@@ -258,13 +262,13 @@ Varios agregados cambian en una misma transacción (ej. `DeliveryNote` + `StockM
 
 **Publicados a Órdenes (saga)**: `StockReserved`, `StockInsufficient`.
 
-**Publicados para el lado lectura (CQRS, vía outbox + Debezium)**: `StockMovementRecorded`, `ProductStockChanged`, `DeliveryNoteRegistered`, `StockTransferred`, `AlertRaised`, `AlertStatusChanged`, `LocationChanged`.
+**Publicados para el lado lectura (CQRS, vía outbox + Debezium)**: `StockMovementRecorded`, `ProductStockChanged`, `AlertRaised`, `AlertStatusChanged`. Solo se publica lo que alimenta un modelo de lectura (decidido 2026-11-07): guías, traslados y ubicaciones se consultan en la BD de escritura. Contrato en `docs/api/inventory-internal.events.yaml`.
 
 Un ajuste no agrega eventos: el kardex y el saldo se proyectan con `StockMovementRecorded` y `ProductStockChanged`, y la alerta con `AlertRaised`.
 
 **Contenido para una proyección idempotente (decidido 2026-11-07, ADR-0007)**: `ProductStockChanged` lleva los valores absolutos de `physicalStock` y `reservedStock`, no diferencias. `StockMovementRecorded` lleva el saldo acumulado del producto después del movimiento, calculado en el lado de escritura. Así, aplicar dos veces el mismo evento no altera el resultado.
 
-**Clave de partición (decidido 2026-11-01)**: `StockMovementRecorded` y `ProductStockChanged` se publican con **`productId` como clave** del mensaje de Kafka, no con el id de su agregado. Así todos los eventos de un mismo producto caen en la misma partición y el lado de lectura los aplica en el orden en que se confirmaron, que es lo que necesita el saldo acumulado de `KardexEntry`. Los demás eventos usan el id de su agregado. Ver `docs/README.md` 3.1.
+**Clave de partición (decidido 2026-11-01)**: `StockMovementRecorded` y `ProductStockChanged` se publican con **`productId` como clave** del mensaje de Kafka, no con el id de su agregado. Así todos los eventos de un mismo producto caen en la misma partición y el lado de lectura los aplica en el orden en que se confirmaron, que es lo que necesita el saldo acumulado de `KardexEntry`. Los demás eventos usan el id de su agregado, salvo `StockReserved` y `StockInsufficient`, que usan `orderId` (ADR-0024). Ver `docs/README.md` 3.1.
 
 ### Modelos de lectura (BD de lectura, MongoDB)
 
@@ -280,7 +284,8 @@ Microservicio con **BD única + tabla outbox** (publica sus eventos vía Debeziu
 
 ### Decisiones de modelado (2026-11-01)
 
-* **El pedido guarda la información del cliente tal como era al crearlo**: contacto (para notificaciones) y dirección de entrega.
+* **Usuario y destinatario son distintos** (ADR-0023): quien registra queda en `registeredBy`, y el destinatario, que puede no tener cuenta, en `contact` y `shippingAddress`.
+* **El pedido guarda los datos del destinatario tal como eran al crearlo**: contacto (para notificaciones) y dirección de entrega.
 * **Snapshot del producto en el ítem, en la BD de escritura** (`sku`, nombre, unidad de medida), obtenido de Catálogo al registrar: el ítem queda trazado tal como fue pedido aunque el producto cambie o se desactive después.
 * **El pedido no se modifica**: solo avanza, se cancela o se devuelve. Para cambiar ítems se cancela y se crea otro.
 * **Transiciones manuales por el administrador** (procesar, enviar, entregar); al enviar solo se registra la fecha (sin transportista ni tracking por ahora).
@@ -294,7 +299,8 @@ Microservicio con **BD única + tabla outbox** (publica sus eventos vía Debeziu
 | Campo | Tipo | Notas |
 |---|---|---|
 | `id` | `OrderId` | |
-| `customerId` | `CustomerId` | Id del usuario en Keycloak (`sub` del token). |
+| `customerId` | `CustomerId` (opcional) | `sub` del token, solo si el pedido lo registró un `CUSTOMER`. |
+| `registeredBy` | `Actor` | Quién registró el pedido. |
 | `contact` | `ContactInfo` (value object) | Snapshot al registrar. |
 | `shippingAddress` | `Address` (value object) | Snapshot al registrar. |
 | `items` | `List<OrderItem>` | Al menos uno; sin productos repetidos. |
@@ -305,6 +311,8 @@ Microservicio con **BD única + tabla outbox** (publica sus eventos vía Debeziu
 | `processedAt` / `shippedAt` / `deliveredAt` | `Instant` (opcionales) | |
 | `cancellation` | `Cancellation` (value object, opcional) | Solo si fue cancelado. |
 | `orderReturn` | `OrderReturn` (value object, opcional) | Solo si fue devuelto. |
+| `idempotencyKey` | `String` (opcional) | Clave del header `Idempotency-Key`. Única junto con `registeredBy.userId`: reintentar con la misma clave devuelve el pedido ya creado. |
+| `requestHash` | `String` (opcional) | Huella de los datos de la petición. Detecta una clave reutilizada con otros datos, que se rechaza. |
 | `version` | `long` | Bloqueo optimista (ej. el scheduler y un `StockReserved` llegando a la vez). |
 
 **Invariantes**:
@@ -326,6 +334,7 @@ Microservicio con **BD única + tabla outbox** (publica sus eventos vía Debeziu
 | Actor | Estados desde los que puede cancelar |
 |---|---|
 | Cliente (solo sus pedidos) | `REGISTERED`, `PENDING`, `RESERVED` |
+| Operador | `REGISTERED`, `PENDING`, `RESERVED` |
 | Administrador | `REGISTERED`, `PENDING`, `RESERVED`, `PROCESSED` |
 | Sistema (expiración) | `REGISTERED`, `PENDING`, `RESERVED` cuando `now` ≥ `expiresAt` |
 
@@ -348,7 +357,7 @@ El motivo es **obligatorio** siempre (en la expiración lo pone el sistema, ej. 
 * **`ContactInfo`**: `fullName`, `email` (opcional), `phone` (opcional). Al menos uno de `email`/`phone` es obligatorio (Notificaciones envía email o SMS).
 * **`Address`**: `line` (dirección), `district`, `city`, `region`, `reference` (opcional).
 * **`StatusChange`**: `from`, `to`, `changedAt`, `actor` (`Actor`), `reason` (opcional).
-* **`Actor`**: `type` (`CUSTOMER`, `ADMIN`, `SYSTEM`) + `userId` (opcional, vacío para `SYSTEM`).
+* **`Actor`**: `type` (`CUSTOMER`, `OPERATOR`, `ADMIN`, `SYSTEM`) + `userId` (opcional, vacío para `SYSTEM`).
 * **`Cancellation`**: `reason`, `actor`, `previousStatus`, `cancelledAt`.
 * **`OrderReturn`**: `reason`, `items` (`productId` + `quantity`), `returnedAt`. Hoy siempre contiene todos los ítems; mantener la lista permite devoluciones parciales a futuro.
 
@@ -372,7 +381,7 @@ Se crea en la misma transacción que la cancelación/devolución del pedido. Inm
 
 Misma estructura y ciclo (`ACTIVE` → `ACKNOWLEDGED` → `RESOLVED`) que en Inventario; se expone por el endpoint de "alertas activas" de Órdenes (`docs/README.md` 4.3).
 
-* `ORDER_CANCELLED`: solo para cancelaciones **automáticas** por expiración y para las del **administrador desde `PROCESSED`** (ambas indican un problema operativo). Las cancelaciones del cliente no generan alerta.
+* `ORDER_CANCELLED`: solo para cancelaciones **automáticas** por expiración y para las del **administrador desde `PROCESSED`** (ambas indican un problema operativo). Las cancelaciones del cliente y del operador no generan alerta.
 
 ### Scheduler de expiración
 
@@ -385,13 +394,14 @@ Misma estructura y ciclo (`ACTIVE` → `ACKNOWLEDGED` → `RESOLVED`) que en Inv
 ### Casos de uso (capa `application`)
 
 * **Cliente**: `RegisterOrder`, `CancelOrder` (propio, antes de procesar), `GetOrder` (propio), `ListMyOrders`.
-* **Administrador**: `ProcessOrder`, `ShipOrder`, `DeliverOrder`, `CancelOrder` (incluye `PROCESSED`), `ReturnOrder`, `ListOrders` (filtros por estado/fechas), `ListIncidents`, `AcknowledgeAlert`, `ResolveAlert`, `ListActiveAlerts`.
+* **Operador**: `RegisterOrder`, `CancelOrder` (antes de procesar), `GetOrder`, `ListOrders`, `ProcessOrder`, `ShipOrder`, `DeliverOrder`, `AcknowledgeAlert`, `ListActiveAlerts`.
+* **Administrador**: todo lo del operador, más `CancelOrder` desde `PROCESSED`, `ReturnOrder`, `ListIncidents` y `ResolveAlert`. Detalle: `ProcessOrder`, `ShipOrder`, `DeliverOrder`, `CancelOrder` (incluye `PROCESSED`), `ReturnOrder`, `ListOrders` (filtros por estado/fechas), `ListIncidents`, `AcknowledgeAlert`, `ResolveAlert`, `ListActiveAlerts`.
 * **Disparados por eventos de Inventario**: `MarkOrderReserved` (← `StockReserved`), `MarkOrderPending` (← `StockInsufficient`).
 * **Interno**: `ExpireOrders` (scheduler).
 
 ### Eventos
 
-**Publicados (vía outbox)** — todos llevan `orderId`, `customerId` y `contact`, para que Notificaciones no necesite consultar a Órdenes:
+**Publicados (vía outbox)** — todos llevan `orderId`, `contact` y, si existe, `customerId`, para que Notificaciones no necesite consultar a Órdenes:
 
 | Evento | Datos adicionales | Consumidores |
 |---|---|---|
@@ -408,11 +418,11 @@ Misma estructura y ciclo (`ACTIVE` → `ACKNOWLEDGED` → `RESOLVED`) que en Inv
 
 ## Notificaciones
 
-Microservicio **consumidor puro**: escucha los eventos de pedido de Órdenes vía Kafka y avisa al **cliente** por email y/o SMS. No expone comandos de negocio ni publica eventos. **BD pequeña** solo para el registro de notificaciones (idempotencia + auditoría), sin CQRS.
+Microservicio **consumidor puro**: escucha los eventos de pedido de Órdenes vía Kafka y avisa al **destinatario** por email y/o SMS. No expone comandos de negocio ni publica eventos. **BD pequeña** solo para el registro de notificaciones (idempotencia + auditoría), sin CQRS.
 
 ### Decisiones de modelado (2026-11-01)
 
-* **Solo se notifica al cliente**; el administrador usa el panel de alertas (`docs/README.md` 4.3).
+* **Solo se notifica al destinatario del pedido**, tenga o no cuenta; el administrador usa el panel de alertas (`docs/README.md` 4.3).
 * **Todos los canales disponibles**: si el contacto tiene email y teléfono, se envía por ambos. La preferencia de canal queda para más adelante.
 * **No consulta a Órdenes**: el contacto y los datos necesarios viajan en cada evento (ver eventos de Órdenes).
 * **Proveedores detrás de un puerto** (hexagonal): hoy SMTP contra **Mailpit** (Docker Compose) para email y un adaptador que solo escribe en el log para SMS. Proveedores reales (SendGrid, Twilio, AWS SES/SNS…) se agregan como nuevos adaptadores sin tocar el dominio.
@@ -426,7 +436,7 @@ Microservicio **consumidor puro**: escucha los eventos de pedido de Órdenes ví
 | `OrderRegistered` | Sí | `ORDER_REGISTERED` — confirmación del pedido con sus ítems. |
 | `OrderPending` | Sí | `ORDER_PENDING` — en espera por falta de stock. |
 | `OrderReserved` | Solo si `previousStatus` = `PENDING` | `ORDER_STOCK_AVAILABLE` — ya hay stock para tu pedido. |
-| `OrderProcessed` | No | — (no cambia nada para el cliente). |
+| `OrderProcessed` | No | — (no cambia nada para el destinatario). |
 | `OrderShipped` | Sí | `ORDER_SHIPPED` |
 | `OrderDelivered` | Sí | `ORDER_DELIVERED` |
 | `OrderCancelled` | Sí | `ORDER_CANCELLED` — incluye el motivo. |
@@ -453,7 +463,7 @@ Un registro por cada aviso enviado (o intentado) por **un canal**: un evento con
 
 **Invariantes**:
 * `(eventId, channel)` **único**: si Kafka entrega el mismo evento dos veces, no se crea ni se envía otra notificación por ese canal (idempotencia).
-* `SENT` y `FAILED` son estados finales; `attempts` nunca supera el máximo configurado.
+* `SENT` es final. `FAILED` solo sale con un reenvío manual (`ReprocessFailedNotification`). `attempts` nunca supera el máximo configurado.
 
 **Flujo**: al consumir un evento → se decide si notifica (tabla anterior) → por cada canal disponible en `contact`, se crea la `Notification` en `PENDING` (si no existía para ese `eventId` + canal) → se renderiza la plantilla → se envía por el puerto `NotificationSender` (Resilience4j: timeout + retry + circuit breaker por proveedor) → `SENT`, o `FAILED` al agotar los reintentos, publicando el evento original a la DLQ para reprocesamiento manual. El consumidor de Kafka no reintenta además por su cuenta (5.1, "no multiplicar reintentos").
 
@@ -466,7 +476,8 @@ Un registro por cada aviso enviado (o intentado) por **un canal**: un evento con
 
 * `HandleOrderEvent` (disparado por cada evento de pedido; decide plantilla y canales).
 * `SendNotification` (envía una `Notification` y actualiza su estado).
-* Administrador (consulta/auditoría): `ListNotifications` (por pedido, estado o fechas), `ReprocessFailedNotification` (reenvío manual de una `FAILED`, que también tiene máximo de intentos).
+* Operador y administrador (consulta/auditoría): `ListNotifications` (por pedido, estado o fechas).
+* Administrador: `ReprocessFailedNotification` (reenvío manual de una `FAILED`, que también tiene máximo de intentos).
 
 ### Eventos
 

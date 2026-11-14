@@ -1,0 +1,197 @@
+openapi: 3.1.0
+info:
+  title: Componentes comunes de las APIs de ProyectoKoala
+  version: 1.0.0
+  description: >-
+    Esquemas, parámetros y respuestas que reutilizan los contratos de cada
+    microservicio. No expone rutas propias. Convenciones en docs/api/README.md.
+paths: {}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token emitido por Keycloak (ADR-0013).
+
+  headers:
+    Location:
+      description: Ruta del recurso creado.
+      schema:
+        type: string
+        format: uri-reference
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Número de página, desde 0.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Size:
+      name: size
+      in: query
+      description: Elementos por página.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  schemas:
+    PageMetadata:
+      type: object
+      description: Datos de paginación que acompañan a toda lista paginada.
+      required: [page, size, totalElements, totalPages]
+      properties:
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+          maximum: 100
+        totalElements:
+          type: integer
+          format: int64
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+
+    Quantity:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Cantidad entera, en la unidad de medida del producto.
+      examples: [12]
+
+    PositiveQuantity:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Cantidad entera mayor que 0, en la unidad de medida del producto.
+      examples: [12]
+
+    FieldError:
+      type: object
+      description: Error de validación de un campo.
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: Ruta del campo, en notación de puntos.
+          examples: [items.0.quantity]
+        message:
+          type: string
+          examples: [Debe ser mayor que 0]
+
+    Problem:
+      type: object
+      description: Error en formato Problem Details (RFC 9457, ADR-0019).
+      required: [title, status, code, traceId]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+        title:
+          type: string
+          description: Resumen del error, en español.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          description: Explicación de este caso, en español.
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*$'
+          description: Código estable, legible por máquina.
+          examples: [PRODUCT_SKU_ALREADY_EXISTS]
+        traceId:
+          type: string
+          description: Identificador de la traza, para diagnosticar (ADR-0014).
+          examples: [4bf92f3577b34da6a3ce929d0e0e4736]
+        errors:
+          type: array
+          description: Solo en errores de validación.
+          items:
+            $ref: '#/components/schemas/FieldError'
+
+  responses:
+    BadRequest:
+      description: La petición no es válida.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Petición inválida
+            status: 400
+            code: VALIDATION_ERROR
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+            errors:
+              - field: name
+                message: Es obligatorio
+    Unauthorized:
+      description: Falta el token, venció o no es válido.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: No autenticado
+            status: 401
+            code: UNAUTHORIZED
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Forbidden:
+      description: El usuario no tiene el rol necesario.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Acceso denegado
+            status: 403
+            code: FORBIDDEN
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    NotFound:
+      description: El recurso no existe o no pertenece al usuario.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Recurso no encontrado
+            status: 404
+            code: RESOURCE_NOT_FOUND
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Conflict:
+      description: La operación choca con el estado actual del recurso.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Conflicto
+            status: 409
+            code: PRODUCT_SKU_ALREADY_EXISTS
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    ServiceUnavailable:
+      description: Una dependencia no está disponible. Se puede reintentar.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            title: Servicio no disponible
+            status: 503
+            code: DEPENDENCY_UNAVAILABLE
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736

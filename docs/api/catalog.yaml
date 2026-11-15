@@ -311,7 +311,9 @@ paths:
         '409':
           description: >-
             La categoría padre no existe o está inactiva
-            (CATEGORY_INVALID_PARENT).
+            (CATEGORY_INVALID_PARENT), o ya hay una categoría con ese nombre
+            bajo el mismo padre, sin distinguir mayúsculas
+            (CATEGORY_NAME_ALREADY_EXISTS).
           content:
             application/problem+json:
               schema:
@@ -367,8 +369,10 @@ paths:
           $ref: 'common.yaml#/components/responses/NotFound'
         '409':
           description: >-
-            El padre crearía un ciclo (CATEGORY_HIERARCHY_CYCLE), o no existe o
-            está inactivo (CATEGORY_INVALID_PARENT).
+            El padre crearía un ciclo (CATEGORY_HIERARCHY_CYCLE), no existe o
+            está inactivo (CATEGORY_INVALID_PARENT), o ya hay una categoría con
+            ese nombre bajo el mismo padre, sin distinguir mayúsculas
+            (CATEGORY_NAME_ALREADY_EXISTS).
           content:
             application/problem+json:
               schema:
@@ -608,7 +612,10 @@ components:
   schemas:
     Sku:
       type: string
-      description: Clave de negocio del producto. Única e inmutable.
+      description: >-
+        Clave de negocio del producto. Única sin distinguir mayúsculas e
+        inmutable: si existe LECHE-1L, leche-1l se rechaza. Se devuelve tal como
+        se registró.
       minLength: 1
       maxLength: 64
       pattern: '^[A-Za-z0-9._-]+$'

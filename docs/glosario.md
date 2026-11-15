@@ -28,6 +28,7 @@ Convención: la documentación de negocio (README, vision.md) se escribe en **es
 | Alerta | `Alert` |
 | Incidencia | `Incident` |
 | Guía de Remisión | `DeliveryNote`  |
+| RUC del emisor de la guía | propiedad `issuerTaxId` |
 | Documento de Compra (genérico) | `PurchaseDocument` |
 | Boleta / Factura | Ambas se modelan como la misma clase **`Invoice`** (en facturación electrónica son el mismo documento, solo difieren en una propiedad de tipo, ej. `documentType`)  |
 | Orden de Compra | `PurchaseOrder` |

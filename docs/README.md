@@ -193,12 +193,12 @@ Aplica a los cuatro microservicios.
 
 | Aspecto | Tecnología | Notas |
 |---|---|---|
-| Seguridad | Keycloak (OAuth2/OIDC) | Cada microservicio actúa como resource server; autorización por roles. |
+| Seguridad | Keycloak (OAuth2/OIDC) | Cada microservicio actúa como resource server; autorización por roles. Detalle en `docs/strategies/security.md`. |
 | Trazabilidad | OpenTelemetry → Tempo | El traceId se propaga también a través de los headers de los mensajes de Kafka, no solo en llamadas HTTP síncronas. |
 | Logs | JSON estructurado con traceId → Loki | Permite correlacionar logs entre microservicios usando el mismo traceId de OpenTelemetry. |
-| Métricas | Prometheus + Grafana | Dashboard versionado en el repo; también soporta las alertas operativas (ver 4.3). |
+| Métricas | Prometheus + Grafana | Dashboard versionado en el repo; también soporta las alertas operativas (ver 4.3). Detalle de logs, trazas, métricas y alertas en `docs/strategies/observability.md`. |
 | Resiliencia | Resilience4j (circuit breaker + retry + timeout) en llamadas síncronas y a proveedores externos; reintentos acotados + DLQ en Kafka para los consumidores de eventos. | **Ningún reintento es infinito** — ver 5.1. |
-| Tests | Testcontainers (BD/Kafka reales en tests), tests de contrato entre microservicios, ArchUnit (reglas de arquitectura hexagonal). | |
+| Tests | Testcontainers (BD/Kafka reales en tests), tests de contrato entre microservicios, ArchUnit (reglas de arquitectura hexagonal). | Detalle en `docs/strategies/testing.md`; contratos validados contra los YAML (ADR-0028). |
 | CI | GitHub Actions: build, tests e imagen publicada en GHCR por cada microservicio. | |
 | Despliegue | Docker Compose (desarrollo local) y Kubernetes local con kind + Helm o Kustomize. | |
 

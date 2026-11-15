@@ -1,6 +1,6 @@
 # ADR-0002: Arquitectura hexagonal (puertos y adaptadores) en cada microservicio
 
-* **Estado**: Aceptado
+* **Estado**: Aceptado; excepción de `@Transactional` en `application` agregada el 2026-11-15 (KOAL-11)
 * **Fecha**: 2026-10-31
 * **Ticket**: KOAL-1 (documentado en KOAL-4)
 
@@ -25,10 +25,13 @@ Cada microservicio sigue la **arquitectura hexagonal**, con esta estructura de p
 * `application.port.out`: lo que el núcleo necesita del exterior (repositorios, catálogo, publicación de eventos, reloj).
 * `application.service`: implementa los casos de uso; maneja la transacción y orquesta el dominio con los puertos de salida.
 * `adapter.in.*` (web, kafka, scheduler) y `adapter.out.*` (persistence, catalog, outbox…): la tecnología.
+* `config`: la declaración de beans y la configuración de Spring.
 
 Las dependencias apuntan siempre hacia el núcleo. **Los puertos de entrada son los casos de uso**: no hay una capa extra de "interactors".
 
 `application` puede depender de Reactor (`Mono`/`Flux`), porque el stack es reactivo de punta a punta. Envolverlo en tipos propios no aportaría nada. `domain` no depende de Reactor.
+
+**`application.service` puede usar `@Transactional`** (`org.springframework.transaction.annotation`), y es su única dependencia de Spring (decidido 2026-11-15). Manejar la transacción es su responsabilidad, y una transacción R2DBC no se abre sin Spring. Los beans se declaran en un paquete `config`, así `application` no lleva `@Service`. La alternativa, un puerto `TransactionRunner`, obligaba a envolver a mano cada caso de uso.
 
 ## Alternativas consideradas
 
@@ -52,7 +55,9 @@ Las dependencias apuntan siempre hacia el núcleo. **Los puertos de entrada son 
 
 **Cómo se verifica**: reglas de ArchUnit en CI, en cada servicio (`docs/architecture/c4-model.md`, nivel 3):
 1. `domain` no depende de otros paquetes de la aplicación ni de Spring, Reactor, R2DBC o Kafka.
-2. `application` depende solo de `domain` (y de Reactor), nunca de `adapter`.
+2. `application` depende solo de `domain` (y de Reactor), nunca de `adapter`. La única excepción es `@Transactional` en `application.service`.
+
+La lista completa de reglas está en `docs/strategies/testing.md` 5.
 3. Un adaptador de entrada usa solo `application.port.in`; los adaptadores no se llaman entre sí.
 4. Solo `adapter.out.*` implementa `application.port.out`.
 

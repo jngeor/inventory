@@ -1,6 +1,6 @@
 # ADR-0014: Stack de observabilidad con OpenTelemetry, Tempo, Loki, Prometheus y Grafana
 
-* **Estado**: Aceptado
+* **Estado**: Aceptado; instrumentación y alertas precisadas por ADR-0027
 * **Fecha**: 2026-10-31 (Tempo y Loki confirmados en KOAL-4)
 * **Ticket**: KOAL-4
 
@@ -14,7 +14,7 @@ Un pedido cruza HTTP, varios servicios, el outbox, Debezium y Kafka (quality-att
 
 * **OpenTelemetry instrumenta los cuatro servicios.** Trazas y logs van por OTLP al **OpenTelemetry Collector**, que los reenvía.
 * **Tempo** guarda las trazas y **Loki** los logs.
-* **Prometheus** guarda las métricas y evalúa las reglas de alerta.
+* **Prometheus** guarda las métricas. Las reglas de alerta las evalúa Grafana (ADR-0027).
 * **Grafana** es el único panel: correlaciona las tres señales por `traceId` y sus dashboards están versionados en el repo.
 * **Los logs son JSON estructurado** e incluyen el `traceId`.
 * **El `traceId` se propaga también por Kafka**, en el header `traceparent`. Quien publica es Debezium, que no conoce la traza de la petición, así que el contexto viaja por el outbox:

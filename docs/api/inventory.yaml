@@ -97,8 +97,9 @@ paths:
           $ref: 'common.yaml#/components/responses/Forbidden'
         '409':
           description: >-
-            La serie y el número ya existen (DELIVERY_NOTE_ALREADY_EXISTS), o
-            un producto no existe o está inactivo (DELIVERY_NOTE_INVALID_PRODUCT).
+            Ya existe una guía con el mismo RUC del emisor, serie y número, sin
+            distinguir mayúsculas (DELIVERY_NOTE_ALREADY_EXISTS), o un producto
+            no existe o está inactivo (DELIVERY_NOTE_INVALID_PRODUCT).
           content:
             application/problem+json:
               schema:
@@ -476,7 +477,8 @@ paths:
         Lista los productos con su stock real, reservado y disponible. Solo
         incluye productos con algún ingreso: uno que nunca tuvo movimientos no
         aparece. SKU, nombre y unidad se consultan a Catálogo en cada llamada.
-        Si outOfSync es true, el saldo de esa fila puede estar mal.
+        Se ordena por productId, que por ser UUIDv7 sigue el orden de alta del
+        producto. Si outOfSync es true, el saldo de esa fila puede estar mal.
       tags: [Stock]
       x-roles: [ADMIN, OPERATOR]
       parameters:
@@ -539,9 +541,13 @@ paths:
       operationId: getKardex
       summary: Consultar el kardex de un producto
       description: >-
-        Devuelve los movimientos en orden cronológico. balance es siempre el
-        saldo acumulado del producto: filtrar por ubicación no lo recalcula.
-        Si outOfSync es true, los saldos pueden estar mal.
+        Devuelve los movimientos en el orden en que se registraron, que es el
+        orden en que se calculó balance. Las fechas filtran por createdAt, la
+        fecha de registro, no por documentDate: un movimiento con fecha de
+        documento atrasada aparece cuando se registró, marcado unusual si
+        corresponde. balance es siempre el saldo acumulado del producto:
+        filtrar por ubicación no lo recalcula. Si outOfSync es true, los
+        saldos pueden estar mal.
       tags: [Stock]
       x-roles: [ADMIN, OPERATOR]
       parameters:
@@ -550,12 +556,18 @@ paths:
         - name: fromDate
           in: query
           required: true
+          description: >-
+            Primer día, inclusive, en la zona horaria del negocio
+            (America/Lima).
           schema:
             type: string
             format: date
         - name: toDate
           in: query
           required: true
+          description: >-
+            Último día, inclusive, en la zona horaria del negocio. No puede ser
+            anterior a fromDate.
           schema:
             type: string
             format: date
@@ -589,6 +601,8 @@ paths:
       description: >-
         Regenera su stock y kardex desde la BD de escritura y quita la marca
         outOfSync. Es idempotente y no afecta a otros productos (ADR-0009).
+        Si el producto recibe cambios mientras se reconstruye, se vuelve a
+        leer la escritura, con un máximo de 3 intentos.
       tags: [Stock]
       x-roles: [ADMIN]
       responses:
@@ -604,12 +618,16 @@ paths:
           $ref: 'common.yaml#/components/responses/Forbidden'
         '404':
           $ref: 'common.yaml#/components/responses/NotFound'
+        '503':
+          $ref: 'common.yaml#/components/responses/ServiceUnavailable'
 
   /alerts:
     get:
       operationId: listActiveAlerts
       summary: Listar alertas activas
-      description: Devuelve las alertas ACTIVE y ACKNOWLEDGED.
+      description: >-
+        Devuelve las alertas ACTIVE y ACKNOWLEDGED, de la más reciente a la
+        más antigua.
       tags: [Alerts]
       x-roles: [ADMIN, OPERATOR]
       parameters:
@@ -759,10 +777,20 @@ components:
           format: date
           description: Fecha de documento de los movimientos de ingreso.
 
+    TaxId:
+      type: string
+      description: >-
+        RUC del emisor de la guía de remisión. Cada emisor numera sus guías por
+        su cuenta, así que la guía es única por RUC, serie y número.
+      pattern: '^[0-9]{11}$'
+      examples: ['20123456789']
+
     RegisterDeliveryNoteRequest:
       type: object
-      required: [series, number, issueDate, purchaseDocument, items]
+      required: [issuerTaxId, series, number, issueDate, purchaseDocument, items]
       properties:
+        issuerTaxId:
+          $ref: '#/components/schemas/TaxId'
         series:
           type: string
           minLength: 1
@@ -785,11 +813,13 @@ components:
 
     DeliveryNote:
       type: object
-      required: [id, series, number, issueDate, purchaseDocument, items, registeredAt]
+      required: [id, issuerTaxId, series, number, issueDate, purchaseDocument, items, registeredAt]
       properties:
         id:
           type: string
           format: uuid
+        issuerTaxId:
+          $ref: '#/components/schemas/TaxId'
         series:
           type: string
         number:
@@ -969,7 +999,10 @@ components:
 
     LocationStock:
       type: object
-      description: Cantidad referencial en una ubicación.
+      description: >-
+        Cantidad referencial en una ubicación. Puede ser negativa: una salida
+        sin ubicación resta de "sin ubicación" aunque la mercadería se haya
+        trasladado, y un traslado no valida la cantidad del origen.
       required: [quantity]
       properties:
         locationId:
@@ -977,7 +1010,10 @@ components:
           format: uuid
           description: Vacío para la mercadería sin ubicación.
         quantity:
-          $ref: 'common.yaml#/components/schemas/Quantity'
+          type: integer
+          format: int64
+          description: Cantidad con signo, en la unidad de medida del producto.
+          examples: [-10]
 
     ProductStockView:
       type: object
@@ -994,7 +1030,9 @@ components:
           $ref: 'common.yaml#/components/schemas/Quantity'
         locations:
           type: array
-          description: Desglose referencial por ubicación.
+          description: >-
+            Desglose referencial por ubicación. La suma es igual a
+            physicalStock. No incluye las ubicaciones en 0.
           items:
             $ref: '#/components/schemas/LocationStock'
         outOfSync:

@@ -23,6 +23,8 @@ Microservicio con BD única (CRUD), sin CQRS.
 
 **Invariantes**: `sku` único e inmutable; `name` no vacío; `minimumStock` ≥ 0.
 
+**SKU sin distinguir mayúsculas** (decidido 2026-11-14): `LECHE-1L` y `leche-1l` son el mismo SKU. Se guarda y se devuelve tal como se registró, pero la unicidad y la búsqueda exacta ignoran mayúsculas.
+
 **Sin precio** (decidido 2026-10-31): el pricing queda fuera de alcance por ahora, coherente con que `vision.md` ya excluye pasarela de pagos/facturación electrónica real. Se puede agregar un campo `price` más adelante si Órdenes lo llega a necesitar.
 
 #### `Category` (raíz de agregado independiente)
@@ -35,7 +37,7 @@ Microservicio con BD única (CRUD), sin CQRS.
 | `parentCategoryId` | `CategoryId` (opcional) | Permite jerarquía (subcategorías) — decidido 2026-10-31. |
 | `active` | `boolean` | Soft delete, igual razón que `Product`. |
 
-**Invariante**: no puede haber ciclos en la jerarquía (una categoría no puede ser ancestro de sí misma).
+**Invariantes**: no puede haber ciclos en la jerarquía (una categoría no puede ser ancestro de sí misma). El nombre es único entre hermanas, sin distinguir mayúsculas (decidido 2026-11-14): "Gaseosas" puede estar bajo "Bebidas" y bajo "Ofertas", pero no dos veces bajo "Bebidas". Las categorías raíz son hermanas entre sí.
 
 #### `UnitOfMeasure` (raíz de agregado independiente)
 
@@ -128,13 +130,16 @@ Cada línea del kardex. Solo se agrega (append-only); nunca se modifica ni se el
 | Campo | Tipo | Notas |
 |---|---|---|
 | `id` | `DeliveryNoteId` | |
-| `series` / `number` | `String` | Serie y número de la guía. Únicos en conjunto. |
+| `issuerTaxId` | `String` | RUC del emisor de la guía, 11 dígitos (decidido 2026-11-14). Cada emisor numera sus guías por su cuenta. |
+| `series` / `number` | `String` | Serie y número de la guía. Únicos junto con `issuerTaxId`, sin distinguir mayúsculas. |
 | `issueDate` | `LocalDate` | Fecha de emisión de la guía. |
 | `purchaseDocument` | `PurchaseDocument` (value object) | **Obligatorio**: todo ingreso debe estar respaldado por un documento de compra. |
 | `items` | `List<DeliveryNoteItem>` | Al menos uno. Cada ítem tiene `productId` y `quantity` (> 0); no puede repetirse el mismo producto. |
 | `registeredAt` | `Instant` | |
 
 **Al registrarla**, en la misma transacción se crea un `StockMovement` `INBOUND` por ítem (sin ubicación, con `documentDate` = `purchaseDocument.issueDate`) y se hace `ProductStock.increase(q)`.
+
+**Fecha de documento de un ingreso** (decidido 2026-11-14): `issueDate` es solo un día, y el criterio de movimiento inusual compara instantes. Se toma el **inicio de ese día en la zona horaria del negocio** (`America/Lima`, configurable). Es el criterio más estricto: un documento del día 10 registrado el 12 a las 10:00 está a 58 h, así que es inusual.
 
 **Invariantes**: `purchaseDocument` obligatorio; al menos un ítem; productos activos en Catálogo (se valida con una consulta síncrona al registrar); inmutable una vez registrada.
 
@@ -234,7 +239,7 @@ Correspondencia con `OrderStatus` en Órdenes: reserva `PENDING` ↔ pedido `PEN
 
 Se exponen por el endpoint de "alertas activas" de Inventario (`docs/README.md` 4.3).
 
-* `MINIMUM_STOCK`: se genera cuando, tras una operación, el stock real (`physicalStock`) queda por debajo del `minimumStock` del producto (consultado a Catálogo). No se duplica mientras ya exista una alerta `ACTIVE` para ese producto, y se resuelve sola cuando el stock vuelve a superar el mínimo.
+* `MINIMUM_STOCK`: se genera cuando, tras una operación, el stock real (`physicalStock`) queda por debajo del `minimumStock` del producto (consultado a Catálogo). No se duplica mientras exista una alerta sin resolver (`ACTIVE` o `ACKNOWLEDGED`) para ese producto (decidido 2026-11-14): reconocerla significa "ya lo vi", no que se arregló. Se resuelve sola cuando el stock vuelve a superar el mínimo.
 * `UNUSUAL_MOVEMENT`: una por cada `StockMovement` con `unusual = true`.
 * `INSUFFICIENT_STOCK`: una por cada reserva que queda en `PENDING`.
 * `SYNC_FAILURE`: fallos de sincronización CQRS (`docs/README.md` 3.1). Lleva el `productId` afectado (si lo hay) y la referencia al evento en la DLQ. Plazo de resolución: 24 h; se resuelve tras reprocesar el evento y reconstruir la proyección del producto. No se puede resolver mientras el producto siga `outOfSync` (decidido 2026-11-07).
@@ -254,7 +259,7 @@ Varios agregados cambian en una misma transacción (ej. `DeliveryNote` + `StockM
 * **Ajustes**: `AdjustStock` (solo administrador), `GetStockAdjustment`, `ListStockAdjustments`.
 * **Reservas (disparados por eventos de Órdenes)**: `ReserveStockForOrder` (← `OrderRegistered`), `ConsumeReservation` (← `OrderProcessed`), `HandleOrderCancellation` (← `OrderCancelled`: libera la reserva si el pedido no estaba procesado, o repone el stock real con un `CANCELLATION` si ya lo estaba), `RestockReturnedOrder` (← `OrderReturned`: `StockMovement` `RETURN` + `ProductStock.increase`), `RetryPendingReservations` (interno, tras cada ingreso).
 * **Alertas**: `AcknowledgeAlert`, `ResolveAlert`, `ListActiveAlerts`.
-* **Consultas (lado lectura)**: `GetProductStock`, `GetKardex` (por producto y rango de fechas, con filtro opcional por ubicación), `GetInventoryReport` (productos con algún ingreso, con filtro por stock disponible; SKU, nombre y unidad se consultan a Catálogo).
+* **Consultas (lado lectura)**: `GetProductStock`, `GetKardex` (por producto y rango de fechas de registro, en orden de registro, con filtro opcional por ubicación), `GetInventoryReport` (productos con algún ingreso, con filtro por stock disponible; SKU, nombre y unidad se consultan a Catálogo).
 
 ### Eventos
 
@@ -273,9 +278,9 @@ Un ajuste no agrega eventos: el kardex y el saldo se proyectan con `StockMovemen
 ### Modelos de lectura (BD de lectura, MongoDB)
 
 * **`KardexEntry`**: una fila por `StockMovement`, con su **saldo acumulado** por producto. El saldo acumulado por ubicación queda fuera del alcance por ahora. Es la base de los reportes de kardex.
-* **`ProductStockView`**: stock real, reservado y disponible por producto, con el desglose referencial por ubicación. Lleva `outOfSync` (+ `outOfSyncSince`): `true` cuando un evento de ese producto terminó en la DLQ; mientras esté así, las consultas de stock y de kardex del producto lo informan (`docs/README.md` 3.1).
+* **`ProductStockView`**: stock real, reservado y disponible por producto, con el desglose referencial por ubicación. El desglose puede tener cantidades negativas, porque una salida sin ubicación resta de "sin ubicación" y un traslado no valida el origen; su suma siempre es el stock real (decidido 2026-11-15). Lleva `outOfSync` (+ `outOfSyncSince`): `true` cuando un evento de ese producto terminó en la DLQ; mientras esté así, las consultas de stock y de kardex del producto lo informan (`docs/README.md` 3.1).
 
-**Reconstrucción por producto**: `RebuildProductProjection(productId)` (administrativo) borra y vuelve a generar el `ProductStockView` y los `KardexEntry` de un producto desde la BD de escritura, y quita la marca `outOfSync`. Es idempotente. Se usa para resolver un `SYNC_FAILURE` en el plazo de 24 h.
+**Reconstrucción por producto**: `RebuildProductProjection(productId)` (administrativo) vuelve a generar el `ProductStockView` y los `KardexEntry` de un producto desde la BD de escritura, y quita la marca `outOfSync`. Es idempotente. No borra el kardex: lo vuelve a escribir por id de movimiento, así no choca con el proyector si llegan eventos del producto mientras corre (`docs/architecture/data-model.md` 8.6). Se usa para resolver un `SYNC_FAILURE` en el plazo de 24 h.
 * **`ActiveAlertView`**: alertas `ACTIVE`/`ACKNOWLEDGED` para el panel del administrador.
 
 ## Órdenes
@@ -311,8 +316,8 @@ Microservicio con **BD única + tabla outbox** (publica sus eventos vía Debeziu
 | `processedAt` / `shippedAt` / `deliveredAt` | `Instant` (opcionales) | |
 | `cancellation` | `Cancellation` (value object, opcional) | Solo si fue cancelado. |
 | `orderReturn` | `OrderReturn` (value object, opcional) | Solo si fue devuelto. |
-| `idempotencyKey` | `String` (opcional) | Clave del header `Idempotency-Key`. Única junto con `registeredBy.userId`: reintentar con la misma clave devuelve el pedido ya creado. |
-| `requestHash` | `String` (opcional) | Huella de los datos de la petición. Detecta una clave reutilizada con otros datos, que se rechaza. |
+| `idempotencyKey` | `String` (opcional) | Clave del header `Idempotency-Key`. Única junto con `registeredBy.userId` y sin vencimiento (decidido 2026-11-15): reintentar con la misma clave devuelve el pedido ya creado. |
+| `requestHash` | `String` (opcional) | Huella de los datos de la petición, con los ítems ordenados por `productId`: el orden de los ítems no cuenta (decidido 2026-11-15). Detecta una clave reutilizada con otros datos, que se rechaza. |
 | `version` | `long` | Bloqueo optimista (ej. el scheduler y un `StockReserved` llegando a la vez). |
 
 **Invariantes**:
@@ -457,15 +462,16 @@ Un registro por cada aviso enviado (o intentado) por **un canal**: un evento con
 | `recipient` | `String` | Email o teléfono, copiado del `contact` del evento. |
 | `template` | `NotificationTemplate` | Ver tabla anterior. |
 | `status` | `NotificationStatus` | `PENDING` → `SENT` / `FAILED`. |
-| `attempts` | `int` | Intentos realizados contra el proveedor (máximo según 5.1). |
+| `attempts` | `int` | Llamadas al proveedor, sumando el envío y los reenvíos. Tope total `notifications.max-attempts`, 12 por defecto: el envío inicial (4 intentos, 5.1) y dos reenvíos de hasta 4 (decidido 2026-11-15). |
+| `subject` / `body` | `String` | Mensaje ya armado al crear la notificación; `subject` solo en email. El reenvío manda el mismo contenido (decidido 2026-11-15). |
 | `lastError` | `String` (opcional) | Último error del proveedor. |
 | `createdAt` / `sentAt` | `Instant` | `sentAt` solo si `SENT`. |
 
 **Invariantes**:
-* `(eventId, channel)` **único**: si Kafka entrega el mismo evento dos veces, no se crea ni se envía otra notificación por ese canal (idempotencia).
+* `(eventId, channel)` **único**: si Kafka entrega el mismo evento dos veces, no se crea otra notificación por ese canal (idempotencia). Si la que existe sigue en `PENDING`, porque el servicio cayó antes de terminar el envío, se vuelve a enviar: el aviso sale al menos una vez y puede repetirse, pero no se pierde (decidido 2026-11-15).
 * `SENT` es final. `FAILED` solo sale con un reenvío manual (`ReprocessFailedNotification`). `attempts` nunca supera el máximo configurado.
 
-**Flujo**: al consumir un evento → se decide si notifica (tabla anterior) → por cada canal disponible en `contact`, se crea la `Notification` en `PENDING` (si no existía para ese `eventId` + canal) → se renderiza la plantilla → se envía por el puerto `NotificationSender` (Resilience4j: timeout + retry + circuit breaker por proveedor) → `SENT`, o `FAILED` al agotar los reintentos, publicando el evento original a la DLQ para reprocesamiento manual. El consumidor de Kafka no reintenta además por su cuenta (5.1, "no multiplicar reintentos").
+**Flujo**: al consumir un evento → se decide si notifica (tabla anterior) → por cada canal disponible en `contact`, se renderiza la plantilla y se crea la `Notification` en `PENDING` con el mensaje armado (si no existía para ese `eventId` + canal) → se envía por el puerto `NotificationSender` (Resilience4j: timeout + retry + circuit breaker por proveedor) → `SENT`, o `FAILED` al agotar los reintentos, publicando el evento original a la DLQ para reprocesamiento manual. El consumidor de Kafka no reintenta además por su cuenta (5.1, "no multiplicar reintentos").
 
 ### Puertos
 

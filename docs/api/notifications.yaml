@@ -20,6 +20,7 @@ paths:
     get:
       operationId: listNotifications
       summary: Listar notificaciones
+      description: Van de la más reciente a la más antigua.
       tags: [Notifications]
       x-roles: [ADMIN, OPERATOR]
       parameters:
@@ -36,13 +37,17 @@ paths:
             $ref: '#/components/schemas/NotificationStatus'
         - name: fromDate
           in: query
-          description: Fecha de creación desde.
+          description: >-
+            Primer día de creación, inclusive, en la zona horaria del negocio
+            (America/Lima).
           schema:
             type: string
             format: date
         - name: toDate
           in: query
-          description: Fecha de creación hasta.
+          description: >-
+            Último día de creación, inclusive, en la zona horaria del negocio.
+            No puede ser anterior a fromDate.
           schema:
             type: string
             format: date
@@ -65,9 +70,10 @@ paths:
       operationId: reprocessFailedNotification
       summary: Reenviar una notificación fallida
       description: >-
-        Solo para notificaciones en FAILED. Responde 200 con el resultado del
-        reenvío, que puede ser SENT o de nuevo FAILED. Tiene un máximo de
-        intentos, para no reenviar sin límite (ADR-0010).
+        Solo para notificaciones en FAILED. Reenvía el mismo mensaje que se
+        armó al crearla. Responde 200 con el resultado del reenvío, que puede
+        ser SENT o de nuevo FAILED. attempts tiene un tope total configurable,
+        12 por defecto, para no reenviar sin límite (ADR-0010).
       tags: [Notifications]
       x-roles: [ADMIN]
       parameters:
@@ -140,6 +146,9 @@ components:
         attempts:
           type: integer
           minimum: 0
+          description: >-
+            Llamadas al proveedor, sumando el envío y los reenvíos. Un envío
+            hace hasta 4.
         lastError:
           type: string
           description: Último error del proveedor.

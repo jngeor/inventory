@@ -26,7 +26,8 @@ paths:
       summary: Listar pedidos
       description: >-
         Con el rol CUSTOMER solo devuelve los pedidos del usuario del token.
-        Con OPERATOR y ADMIN devuelve todos.
+        Con OPERATOR y ADMIN devuelve todos. Van del más reciente al más
+        antiguo, por fecha de registro.
       tags: [Orders]
       x-roles: [ADMIN, OPERATOR, CUSTOMER]
       parameters:
@@ -38,13 +39,17 @@ paths:
             $ref: '#/components/schemas/OrderStatus'
         - name: fromDate
           in: query
-          description: Fecha de registro desde.
+          description: >-
+            Primer día de registro, inclusive, en la zona horaria del negocio
+            (America/Lima).
           schema:
             type: string
             format: date
         - name: toDate
           in: query
-          description: Fecha de registro hasta.
+          description: >-
+            Último día de registro, inclusive, en la zona horaria del negocio.
+            No puede ser anterior a fromDate.
           schema:
             type: string
             format: date
@@ -71,7 +76,8 @@ paths:
         tener cuenta. Si registra un CUSTOMER, customerId sale del token; si
         registra OPERATOR o ADMIN, el pedido no lo tiene. Con Idempotency-Key,
         reintentar no crea un segundo pedido: responde 200 con el pedido ya
-        creado.
+        creado. La clave no vence, y el orden de los ítems no cuenta al
+        comparar los datos.
       tags: [Orders]
       x-roles: [ADMIN, OPERATOR, CUSTOMER]
       parameters:
@@ -298,6 +304,9 @@ paths:
     get:
       operationId: listIncidents
       summary: Listar incidencias
+      description: >-
+        Van de la más reciente a la más antigua. fromDate y toDate son días
+        completos, inclusive, en la zona horaria del negocio (America/Lima).
       tags: [Incidents]
       x-roles: [ADMIN]
       parameters:
@@ -341,7 +350,9 @@ paths:
     get:
       operationId: listActiveAlerts
       summary: Listar alertas activas
-      description: Devuelve las alertas ACTIVE y ACKNOWLEDGED.
+      description: >-
+        Devuelve las alertas ACTIVE y ACKNOWLEDGED, de la más reciente a la
+        más antigua.
       tags: [Alerts]
       x-roles: [ADMIN, OPERATOR]
       parameters:
@@ -424,8 +435,9 @@ components:
       name: Idempotency-Key
       in: header
       description: >-
-        Clave que quien registra genera por cada intento. Es opcional y única
-        por usuario. Se recomienda un UUID.
+        Clave que quien registra genera por cada pedido y repite en sus
+        reintentos. Es opcional, única por usuario y no vence: la misma clave
+        devuelve siempre el mismo pedido. Se recomienda un UUID.
       schema:
         type: string
         minLength: 1

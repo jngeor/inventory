@@ -1,0 +1,12 @@
+# Git guarda LF en el repositorio y en la copia de trabajo, también en Windows.
+* text=auto eol=lf
+
+# Scripts de Windows
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binarios
+*.png binary
+*.jpg binary
+*.gif binary
+*.jar binary

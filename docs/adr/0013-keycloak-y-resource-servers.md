@@ -1,6 +1,6 @@
 # ADR-0013: Keycloak como proveedor de identidad y cada servicio como resource server
 
-* **Estado**: Aceptado; roles y origen del `customerId` ampliados por ADR-0023
+* **Estado**: Aceptado; roles y origen del `customerId` ampliados por ADR-0023; protección de los eventos ampliada por ADR-0026
 * **Fecha**: 2026-10-31
 * **Ticket**: KOAL-4
 
@@ -40,7 +40,7 @@ El sistema tiene administradores y clientes, y más roles podrían aparecer (`do
 * Un token no se puede revocar antes de que venza. Por eso dura solo 5 minutos: un rol retirado sigue vigente, como máximo, ese tiempo.
 * **Importar un realm no modifica uno que ya existe**: en un entorno ya creado, cambiar la duración exige hacerlo también en Keycloak, por consola o por su API.
 * La auditoría de accesos denegados se conserva lo que dure la retención de logs: 14 días en desarrollo (ADR-0014). Si hace falta guardarla más tiempo, se hará una tabla por servicio cuando exista producción.
-* Kafka no pasa por esta validación. El token no viaja en los eventos, y estos se confían por ser internos.
+* Kafka no pasa por esta validación. El token no viaja en los eventos: se protegen controlando el acceso al broker (ADR-0026).
 
 **Cómo se verifica**: escenarios S1 y S2 de `quality-attributes.md`.
 

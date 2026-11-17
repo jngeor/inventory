@@ -162,7 +162,7 @@ flowchart TB
 flowchart LR
     subgraph APPS["Contenedores que emiten telemetría"]
         direction TB
-        SVC["<b>Catálogo · Inventario · Órdenes · Notificaciones</b><br/>[OpenTelemetry Java agent / SDK]<br/>logs JSON con traceId"]:::internal
+        SVC["<b>Catálogo · Inventario · Órdenes · Notificaciones</b><br/>[agent de OpenTelemetry, ADR-0027]<br/>logs JSON con traceId"]:::internal
         INFRA["<b>Kafka · Kafka Connect · PostgreSQL · MongoDB</b><br/>[exporters / JMX]"]:::internal
     end
 
@@ -171,8 +171,8 @@ flowchart LR
         OTEL["<b>OpenTelemetry Collector</b><br/>[Contenedor]<br/>recibe trazas y logs (OTLP)"]:::internal
         TEMPO[("<b>Tempo</b><br/>trazas distribuidas")]:::db
         LOKI[("<b>Loki</b><br/>logs centralizados")]:::db
-        PROM[("<b>Prometheus</b><br/>métricas + reglas de alerta")]:::db
-        GRAF["<b>Grafana</b><br/>[Contenedor]<br/>dashboards versionados en el repo"]:::internal
+        PROM[("<b>Prometheus</b><br/>métricas")]:::db
+        GRAF["<b>Grafana</b><br/>[Contenedor]<br/>dashboards y alertas versionados en el repo"]:::internal
     end
 
     ADM(["Administrador / desarrollador"]):::person
@@ -194,7 +194,7 @@ flowchart LR
 
 * **El `traceId` cruza Kafka** en el header `traceparent`, así un pedido produce una sola traza de punta a punta (quality-attributes O1).
 * **Grafana correlaciona las tres señales**: de una traza en Tempo se salta a sus logs en Loki por el mismo `traceId`.
-* **Las alertas operativas** (conector de Debezium en `FAILED`, mensajes en la DLT, circuito abierto, retraso del lado de lectura) se definen como reglas en Prometheus y se ven en Grafana (quality-attributes D3, O2, R3).
+* **Las alertas operativas** (conector de Debezium en `FAILED`, mensajes en la DLT, circuito abierto, retraso del lado de lectura) son reglas de Grafana evaluadas contra Prometheus, y Grafana envía los avisos por correo (quality-attributes D3, O2, R3; ADR-0027). Detalle en `docs/strategies/observability.md`.
 
 ### Contenedores
 
@@ -214,8 +214,8 @@ flowchart LR
 | OpenTelemetry Collector | OTel Collector | Recibe trazas y logs por OTLP y los reenvía. | — |
 | Tempo | Grafana Tempo | Almacén de trazas. | Trazas |
 | Loki | Grafana Loki | Almacén de logs. | Logs |
-| Prometheus | Prometheus | Métricas y reglas de alerta. | Series de tiempo |
-| Grafana | Grafana | Dashboards versionados en el repo y alertas. | — |
+| Prometheus | Prometheus | Métricas. | Series de tiempo |
+| Grafana | Grafana | Dashboards y alertas versionados en el repo; evalúa las reglas y envía los avisos (ADR-0027). | — |
 
 ---
 
@@ -396,13 +396,16 @@ orders
         ├── persistence    ← R2DBC
         ├── catalog        ← CatalogRestClient (ACL)
         └── outbox         ← OutboxEventPublisher
+└── config                 ← declaración de beans y configuración de Spring
 ```
 
 Reglas que ArchUnit verifica en CI (README 5, quality-attributes M2):
 
 1. `domain` no depende de ningún otro paquete de la aplicación, ni de Spring, Reactor, R2DBC o Kafka.
-2. `application` depende solo de `domain` (y de Reactor, por ser WebFlux de punta a punta). No depende de `adapter`.
+2. `application` depende solo de `domain` (y de Reactor, por ser WebFlux de punta a punta), salvo `@Transactional` en `application.service`. No depende de `adapter` ni de `config`.
 3. Los adaptadores no se llaman entre sí: un adaptador de entrada solo usa `application.port.in`.
 4. Solo `adapter.out.*` implementa las interfaces de `application.port.out`.
+
+Las demás reglas (seguridad, kardex inmutable, reloj, logs) están en `docs/strategies/testing.md` 5.
 
 La misma estructura se repite en los otros tres servicios. En Inventario, `adapter.in` agrega el consumidor del lado de lectura y `adapter.out` agrega el repositorio de la BD de lectura (Spring Data MongoDB Reactive).

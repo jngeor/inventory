@@ -51,7 +51,7 @@ Escenarios de calidad medibles para validar que la arquitectura cumple lo que pr
 | Estímulo | Catálogo deja de responder (caído o con timeouts) mientras se registran pedidos y guías de remisión. |
 | Artefacto | Clientes REST hacia Catálogo en Órdenes e Inventario (Resilience4j, README 5.1). |
 | Entorno | Operación normal. |
-| Respuesta | Las operaciones que necesitan Catálogo fallan de forma controlada con 503 y un mensaje claro, sin dejar datos a medias. El circuit breaker se abre y deja de llamar a Catálogo. El resto del sistema sigue funcionando: la saga en curso, las consultas de kardex, las transiciones del administrador y las notificaciones. |
+| Respuesta | Las operaciones que necesitan Catálogo fallan de forma controlada con 503 y un mensaje claro, sin dejar datos a medias. El circuit breaker se abre y deja de llamar a Catálogo. El resto del sistema sigue funcionando: la saga en curso, las consultas de kardex, las transiciones del pedido que hacen el operador y el administrador, y las notificaciones. |
 | Medida | Con el circuito abierto, el 503 se devuelve en menos de **100 ms** (p95), sin esperar timeouts. Cada petición hace como máximo **3 intentos** a Catálogo antes de abrir el circuito. **0** pedidos o guías guardados con datos incompletos. Cuando Catálogo vuelve, el circuito se cierra solo en menos de **60 s**. |
 | Verificación | Test de integración con Testcontainers + Toxiproxy (o detener el contenedor), y métricas de Resilience4j en Prometheus. |
 
@@ -223,4 +223,4 @@ Escenarios de calidad medibles para validar que la arquitectura cumple lo que pr
 
 * **Escalabilidad horizontal**: el diseño la permite (consumidores agrupados por consumer group, ShedLock para el scheduler), pero no hay metas de escala hasta tener mediciones de R1–R3.
 * **Recuperación ante desastres** (respaldos, RPO/RTO): fuera de alcance del entorno local.
-* **Disponibilidad anual (SLA en "nueves")**: no tiene sentido en un entorno de desarrollo; los escenarios D1–D3 miden el comportamiento ante fallos concretos.
+* **Disponibilidad anual (SLA en "nueves")**: no tiene sentido en un entorno de desarrollo; los escenarios D1–D4 miden el comportamiento ante fallos concretos.

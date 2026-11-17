@@ -7,7 +7,9 @@ info:
     parte del lenguaje publicado: pueden cambiar sin coordinar con otros
     servicios (ADR-0004), pero siguen las mismas reglas de formato (ADR-0024).
     Cada evento se puede aplicar dos veces sin dañar la proyección (ADR-0007,
-    ADR-0025). Solo hay eventos que alimentan un modelo de lectura.
+    ADR-0025). Solo hay eventos que alimentan un modelo de lectura. Su único
+    consumidor es el proyector de Inventario, indicado en x-consumers para
+    sus tests de contrato (ADR-0028).
 defaultContentType: application/json
 
 channels:
@@ -75,6 +77,7 @@ components:
       description: >-
         Lleva el saldo acumulado del producto, calculado en el lado de
         escritura. El proyector inserta el KardexEntry con movementId como _id.
+      x-consumers: [inventory]
       traits:
         - $ref: '#/components/messageTraits/ByProduct'
       payload:
@@ -105,6 +108,7 @@ components:
       description: >-
         Lleva valores absolutos, no diferencias: el proyector los reemplaza.
         También se publica al reservar o liberar, aunque no haya movimiento.
+      x-consumers: [inventory]
       traits:
         - $ref: '#/components/messageTraits/ByProduct'
       payload:
@@ -126,6 +130,7 @@ components:
     AlertRaised:
       name: AlertRaised
       title: Alerta generada
+      x-consumers: [inventory]
       traits:
         - $ref: '#/components/messageTraits/ByAggregate'
       payload:
@@ -148,6 +153,7 @@ components:
       name: AlertStatusChanged
       title: Estado de alerta cambiado
       description: Lleva el estado nuevo, no la transición.
+      x-consumers: [inventory]
       traits:
         - $ref: '#/components/messageTraits/ByAggregate'
       payload:

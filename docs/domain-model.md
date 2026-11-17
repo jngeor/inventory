@@ -234,7 +234,7 @@ Correspondencia con `OrderStatus` en Órdenes: reserva `PENDING` ↔ pedido `PEN
 | `type` | `AlertType` | `MINIMUM_STOCK`, `UNUSUAL_MOVEMENT`, `INSUFFICIENT_STOCK`, `SYNC_FAILURE`, `STOCK_ADJUSTMENT`. |
 | `reference` | `String` | Qué la originó: `productId`, `stockMovementId` u `orderId`, según el tipo. |
 | `message` | `String` | |
-| `status` | `AlertStatus` | `ACTIVE` → `ACKNOWLEDGED` (el administrador la vio) → `RESOLVED`. |
+| `status` | `AlertStatus` | `ACTIVE` → `ACKNOWLEDGED` (el operador o el administrador la vio) → `RESOLVED`. |
 | `createdAt` | `Instant` | |
 
 Se exponen por el endpoint de "alertas activas" de Inventario (`docs/README.md` 4.3).
@@ -279,9 +279,9 @@ Un ajuste no agrega eventos: el kardex y el saldo se proyectan con `StockMovemen
 
 * **`KardexEntry`**: una fila por `StockMovement`, con su **saldo acumulado** por producto. El saldo acumulado por ubicación queda fuera del alcance por ahora. Es la base de los reportes de kardex.
 * **`ProductStockView`**: stock real, reservado y disponible por producto, con el desglose referencial por ubicación. El desglose puede tener cantidades negativas, porque una salida sin ubicación resta de "sin ubicación" y un traslado no valida el origen; su suma siempre es el stock real (decidido 2026-11-15). Lleva `outOfSync` (+ `outOfSyncSince`): `true` cuando un evento de ese producto terminó en la DLQ; mientras esté así, las consultas de stock y de kardex del producto lo informan (`docs/README.md` 3.1).
+* **`ActiveAlertView`**: alertas `ACTIVE`/`ACKNOWLEDGED` para el panel del administrador.
 
 **Reconstrucción por producto**: `RebuildProductProjection(productId)` (administrativo) vuelve a generar el `ProductStockView` y los `KardexEntry` de un producto desde la BD de escritura, y quita la marca `outOfSync`. Es idempotente. No borra el kardex: lo vuelve a escribir por id de movimiento, así no choca con el proyector si llegan eventos del producto mientras corre (`docs/architecture/data-model.md` 8.6). Se usa para resolver un `SYNC_FAILURE` en el plazo de 24 h.
-* **`ActiveAlertView`**: alertas `ACTIVE`/`ACKNOWLEDGED` para el panel del administrador.
 
 ## Órdenes
 
@@ -293,7 +293,7 @@ Microservicio con **BD única + tabla outbox** (publica sus eventos vía Debeziu
 * **El pedido guarda los datos del destinatario tal como eran al crearlo**: contacto (para notificaciones) y dirección de entrega.
 * **Snapshot del producto en el ítem, en la BD de escritura** (`sku`, nombre, unidad de medida), obtenido de Catálogo al registrar: el ítem queda trazado tal como fue pedido aunque el producto cambie o se desactive después.
 * **El pedido no se modifica**: solo avanza, se cancela o se devuelve. Para cambiar ítems se cancela y se crea otro.
-* **Transiciones manuales por el administrador** (procesar, enviar, entregar); al enviar solo se registra la fecha (sin transportista ni tracking por ahora).
+* **Transiciones manuales por el operador o el administrador** (procesar, enviar, entregar; ADR-0023); al enviar solo se registra la fecha (sin transportista ni tracking por ahora).
 * **Devolución solo total** por ahora, sin plazo; se modela con lista de ítems devueltos para poder habilitar devoluciones parciales a futuro (ej. pedido parcialmente dañado) sin rehacer el modelo.
 * **Expiración configurable**: el plazo de 48 h es una propiedad (`orders.expiration.timeout=48h`), no está fijo en código.
 
@@ -330,7 +330,7 @@ Microservicio con **BD única + tabla outbox** (publica sus eventos vía Debeziu
 * `register(...)`: crea en `REGISTERED`; los productos deben estar activos en Catálogo (consulta síncrona, que también provee el snapshot).
 * `markReserved()` (← `StockReserved`): `REGISTERED`/`PENDING` → `RESERVED`.
 * `markPending()` (← `StockInsufficient`): `REGISTERED` → `PENDING`.
-* `process()`, `ship()`, `deliver()`: administrador.
+* `process()`, `ship()`, `deliver()`: operador o administrador.
 * `cancel(reason, actor)`: ver reglas de cancelación.
 * `returnOrder(reason, items)`: solo desde `DELIVERED`; hoy `items` debe incluir **todos** los ítems con su cantidad completa.
 
@@ -390,7 +390,7 @@ Misma estructura y ciclo (`ACTIVE` → `ACKNOWLEDGED` → `RESOLVED`) que en Inv
 
 ### Scheduler de expiración
 
-`ExpireOrders` corre periódicamente y cancela (actor `SYSTEM`) los pedidos en `REGISTERED`, `PENDING` o `RESERVED` con `expiresAt` vencido. Con varias instancias del servicio, se ejecuta en una sola mediante **ShedLock**. Usa bloqueo optimista para no pisar una transición concurrente (ej. el administrador procesando el pedido en ese momento).
+`ExpireOrders` corre periódicamente y cancela (actor `SYSTEM`) los pedidos en `REGISTERED`, `PENDING` o `RESERVED` con `expiresAt` vencido. Con varias instancias del servicio, se ejecuta en una sola mediante **ShedLock**. Usa bloqueo optimista para no pisar una transición concurrente (ej. un operador procesando el pedido en ese momento).
 
 ### Relaciones entre agregados
 
@@ -400,7 +400,7 @@ Misma estructura y ciclo (`ACTIVE` → `ACKNOWLEDGED` → `RESOLVED`) que en Inv
 
 * **Cliente**: `RegisterOrder`, `CancelOrder` (propio, antes de procesar), `GetOrder` (propio), `ListMyOrders`.
 * **Operador**: `RegisterOrder`, `CancelOrder` (antes de procesar), `GetOrder`, `ListOrders`, `ProcessOrder`, `ShipOrder`, `DeliverOrder`, `AcknowledgeAlert`, `ListActiveAlerts`.
-* **Administrador**: todo lo del operador, más `CancelOrder` desde `PROCESSED`, `ReturnOrder`, `ListIncidents` y `ResolveAlert`. Detalle: `ProcessOrder`, `ShipOrder`, `DeliverOrder`, `CancelOrder` (incluye `PROCESSED`), `ReturnOrder`, `ListOrders` (filtros por estado/fechas), `ListIncidents`, `AcknowledgeAlert`, `ResolveAlert`, `ListActiveAlerts`.
+* **Administrador**: todo lo del operador, más `CancelOrder` desde `PROCESSED`, `ReturnOrder`, `ListIncidents` y `ResolveAlert`.
 * **Disparados por eventos de Inventario**: `MarkOrderReserved` (← `StockReserved`), `MarkOrderPending` (← `StockInsufficient`).
 * **Interno**: `ExpireOrders` (scheduler).
 

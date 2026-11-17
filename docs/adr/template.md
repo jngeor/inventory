@@ -3,6 +3,7 @@
 * **Estado**: Propuesto | Aceptado | Reemplazado por ADR-XXXX | Obsoleto
 * **Fecha**: AAAA-MM-DD
 * **Ticket**: KOAL-N
+* **Amplía / Reemplaza / Cierra** (opcional): ADR-XXXX, en …
 
 ## Contexto
 

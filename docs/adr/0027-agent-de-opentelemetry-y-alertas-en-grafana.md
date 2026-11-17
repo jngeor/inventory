@@ -3,7 +3,8 @@
 * **Estado**: Aceptado
 * **Fecha**: 2026-11-15
 * **Ticket**: KOAL-11
-* **Amplía y corrige**: ADR-0014, en cómo se instrumentan los servicios y quién evalúa las alertas.
+* **Reemplaza**: la parte de ADR-0014 que asigna a Prometheus la evaluación de las alertas.
+* **Amplía**: ADR-0014, en cómo se instrumentan los servicios.
 
 ## Contexto
 

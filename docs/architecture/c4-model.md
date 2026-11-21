@@ -162,7 +162,7 @@ flowchart TB
 flowchart LR
     subgraph APPS["Contenedores que emiten telemetría"]
         direction TB
-        SVC["<b>Catálogo · Inventario · Órdenes · Notificaciones</b><br/>[agent de OpenTelemetry, ADR-0027]<br/>logs JSON con traceId"]:::internal
+        SVC["<b>Gateway · Catálogo · Inventario · Órdenes · Notificaciones</b><br/>[agent de OpenTelemetry, ADR-0027]<br/>logs JSON con traceId"]:::internal
         INFRA["<b>Kafka · Kafka Connect · PostgreSQL · MongoDB</b><br/>[exporters / JMX]"]:::internal
     end
 
@@ -221,7 +221,7 @@ flowchart LR
 
 ## Nivel 3: Componentes de Órdenes (hexagonal)
 
-Órdenes por dentro, en puertos y adaptadores. El dominio y la aplicación no dependen de Spring, de la BD ni de Kafka: solo los adaptadores conocen la tecnología.
+Órdenes por dentro, en puertos y adaptadores. El dominio no depende de Spring, de la BD ni de Kafka, y la aplicación solo usa `@Transactional` de Spring (ADR-0002): el resto de la tecnología queda en los adaptadores.
 
 ```mermaid
 flowchart LR
@@ -242,7 +242,7 @@ flowchart LR
             SCHED["<b>ExpirationScheduler</b><br/>[@Scheduled + ShedLock]"]:::adapter
         end
 
-        subgraph HEX["Núcleo (sin frameworks)"]
+        subgraph HEX["Núcleo (dominio sin frameworks)"]
             direction TB
             subgraph PIN["Puertos de entrada (casos de uso)"]
                 direction TB
@@ -387,15 +387,15 @@ orders
 │   │   ├── in             ← interfaces de los casos de uso
 │   │   └── out            ← OrderRepository, ProductCatalog, OrderEventPublisher, Clock
 │   └── service            ← implementaciones de los casos de uso
-└── adapter
-    ├── in
-    │   ├── web            ← controllers WebFlux
-    │   ├── kafka          ← StockEventsConsumer
-    │   └── scheduler      ← ExpirationScheduler
-    └── out
-        ├── persistence    ← R2DBC
-        ├── catalog        ← CatalogRestClient (ACL)
-        └── outbox         ← OutboxEventPublisher
+├── adapter
+│   ├── in
+│   │   ├── web            ← controllers WebFlux
+│   │   ├── kafka          ← StockEventsConsumer
+│   │   └── scheduler      ← ExpirationScheduler
+│   └── out
+│       ├── persistence    ← R2DBC
+│       ├── catalog        ← CatalogRestClient (ACL)
+│       └── outbox         ← OutboxEventPublisher
 └── config                 ← declaración de beans y configuración de Spring
 ```
 

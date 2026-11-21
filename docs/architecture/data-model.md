@@ -129,6 +129,7 @@ CREATE INDEX ix_outbox_created_at ON outbox (created_at);  -- purga
 * **El Outbox Event Router se configura con estos nombres**, porque no son sus valores por defecto: `table.field.event.id=id`, `table.field.event.key=event_key`, `table.field.event.type=event_type`, `table.field.event.payload=payload`, `route.by.field=aggregate_type` y `traceparent` como header (`table.fields.additional.placement`).
 * Con `payload` en `jsonb`, el conector debe publicar el JSON tal cual y no como texto escapado. La opción exacta del conector se verifica al implementar Inventario.
 * **Purga**: un job con ShedLock borra las filas con más de 7 días, configurable (ADR-0006).
+* **`traceparent` admite `NULL`**, para que un fallo al tomar el contexto de la traza no impida guardar el cambio de negocio. Aun así, el contrato lo exige en cada mensaje (`events-common.yaml`): una fila sin `traceparent` es un error, y lo detecta el test de `docs/strategies/observability.md` 9. Un consumidor que recibe un mensaje sin el header no lo rechaza: empieza una traza nueva.
 * Cambiar esta tabla afecta al conector: esos cambios se coordinan con su configuración (ADR-0020).
 
 ### 3.2 `processed_events`

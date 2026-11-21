@@ -1,6 +1,15 @@
 # Registro de Decisiones de Arquitectura (ADR)
 
-Cada ADR registra una decisión importante: el contexto, lo decidido, las alternativas descartadas y sus consecuencias. Una decisión aceptada no se edita: si cambia, se escribe un ADR nuevo que la **reemplaza**, y el anterior se marca como reemplazado.
+Cada ADR registra una decisión importante: el contexto, lo decidido, las alternativas descartadas y sus consecuencias.
+
+**Cómo cambia un ADR aceptado:**
+
+1. **Su decisión no cambia.** Si la decisión cambia o crece, se escribe un ADR nuevo:
+   * **El nuevo** lleva la línea `Amplía: ADR-XXXX, en …` o `Reemplaza: ADR-XXXX` (o la parte que reemplaza).
+   * **El anterior** cambia su estado: `Aceptado; ampliado por ADR-YYYY` o `Reemplazado por ADR-YYYY`. Si se reemplaza solo una parte, el estado dice cuál. Si hace falta, en la parte afectada deja una remisión corta al ADR nuevo, sin reescribir su decisión.
+2. **Una precisión que no cambia la decisión** se escribe en el mismo ADR, con la fecha y el ticket en su estado: `Aceptado; precisado el AAAA-MM-DD (KOAL-N)`.
+3. **Las erratas** (referencias, formato y ortografía) se corrigen sin nota.
+4. **`Cierra:`** indica que un ADR resuelve un pendiente de este índice.
 
 * **Formato**: `NNNN-titulo-en-kebab-case.md`, a partir de `template.md`.
 * **Idioma**: español, como el resto de la documentación de negocio. Los nombres de código van en inglés (`docs/glosario.md`).
@@ -12,7 +21,7 @@ Cada ADR registra una decisión importante: el contexto, lo decidido, las altern
 | ADR | Decisión | Estado | Fecha |
 |---|---|---|---|
 | [0001](0001-descomposicion-en-cuatro-microservicios.md) | Descomponer el sistema en cuatro microservicios por contexto acotado | Aceptado | 2026-10-31 |
-| [0002](0002-arquitectura-hexagonal.md) | Arquitectura hexagonal en cada microservicio | Aceptado; excepción de `@Transactional` agregada en KOAL-11 | 2026-10-31 |
+| [0002](0002-arquitectura-hexagonal.md) | Arquitectura hexagonal en cada microservicio | Aceptado; precisado el 2026-11-15 (KOAL-11) | 2026-10-31 |
 | [0003](0003-base-de-datos-por-servicio.md) | Cada microservicio es dueño exclusivo de su base de datos | Aceptado | 2026-10-31 |
 | [0004](0004-cqrs-solo-en-inventario.md) | CQRS solo en Inventario | Aceptado | 2026-10-31 |
 | [0005](0005-saga-coreografiada-ordenes-inventario.md) | Integrar Órdenes e Inventario con una saga coreografiada por eventos | Aceptado | 2026-10-31 |
@@ -29,7 +38,7 @@ Cada ADR registra una decisión importante: el contexto, lo decidido, las altern
 | [0011](0011-spring-data-r2dbc.md) | Spring Data R2DBC para la persistencia reactiva | Aceptado | 2026-11-01 |
 | [0012](0012-shedlock-para-el-scheduler-de-expiracion.md) | ShedLock para el scheduler de expiración | Aceptado | 2026-11-01 |
 | [0013](0013-keycloak-y-resource-servers.md) | Keycloak como proveedor de identidad y cada servicio como resource server | Aceptado; ampliado por ADR-0023 y ADR-0026 | 2026-10-31 |
-| [0014](0014-stack-de-observabilidad.md) | Stack de observabilidad con OpenTelemetry, Tempo, Loki, Prometheus y Grafana | Aceptado; precisado por ADR-0027 | 2026-10-31 |
+| [0014](0014-stack-de-observabilidad.md) | Stack de observabilidad con OpenTelemetry, Tempo, Loki, Prometheus y Grafana | Aceptado; ampliado y reemplazado en parte por ADR-0027 | 2026-10-31 |
 | [0015](0015-spring-cloud-gateway.md) | Spring Cloud Gateway como punto de entrada | Aceptado | 2026-11-07 |
 | [0016](0016-kafka-como-broker-de-eventos.md) | Kafka como broker de eventos | Aceptado | 2026-10-31 |
 | [0017](0017-java-21-spring-boot-y-webflux.md) | Java 21, Spring Boot y WebFlux como base de los microservicios | Aceptado | 2026-10-31 |

@@ -1,6 +1,6 @@
 # ADR-0014: Stack de observabilidad con OpenTelemetry, Tempo, Loki, Prometheus y Grafana
 
-* **Estado**: Aceptado; instrumentación y alertas precisadas por ADR-0027
+* **Estado**: Aceptado; ampliado y reemplazado en parte por ADR-0027 (instrumentación y quién evalúa las alertas)
 * **Fecha**: 2026-10-31 (Tempo y Loki confirmados en KOAL-4)
 * **Ticket**: KOAL-4
 

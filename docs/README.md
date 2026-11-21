@@ -69,7 +69,7 @@ Aplica íntegramente dentro del microservicio **Inventario** (ver 4.1). Los dem�
 * **Lado escritura (dentro de Inventario)**: expone los comandos, escribe en la BD de escritura y, en la misma transacción, graba el evento en una tabla outbox (patrón Outbox), evitando el problema de doble escritura entre BD y cola.
 * **Relay vía CDC (Debezium)**: en vez de un relay por polling, se usa **Debezium** leyendo el log de transacciones de la BD de escritura (WAL/binlog), con el **Outbox Event Router** de Debezium publicando directo a Kafka (vía Kafka Connect). Esto evita la carga de polling sobre la BD y los problemas de concurrencia de un poller con múltiples instancias (`SELECT ... FOR UPDATE SKIP LOCKED`). Se eligió sobre polling por la latencia más baja y porque Debezium ya tiene soporte nativo para el patrón Outbox. Requiere habilitar replicación lógica en la BD de escritura y desplegar Kafka Connect junto al resto del stack. Se mantiene una tabla/log de idempotencia (por ID único de evento) del lado del consumidor para garantizar que un mismo evento no se aplique dos veces.
 * **Lado lectura (dentro de Inventario)**: consume los eventos de Kafka y actualiza la BD de lectura, validando idempotencia antes de aplicar cada evento. Los eventos que afectan el stock o el kardex de un producto (`StockMovementRecorded`, `ProductStockChanged`) se publican con **`productId` como clave** del mensaje (decidido 2026-11-01). Así Kafka garantiza su orden por producto y el saldo acumulado del kardex se calcula bien. La fila del outbox lleva esa clave en una columna propia, que el Outbox Event Router usa como clave del mensaje (`table.field.event.key`), separada de `aggregateid`. El proyector procesa cada partición en secuencia, sin paralelismo dentro de ella. La BD de lectura es **MongoDB** (decidido 2026-11-01): los modelos de lectura se guardan como documentos listos para consultar, y el log de idempotencia vive en la misma BD. Las BD de escritura de todos los servicios son **PostgreSQL**.
-* **Fallos de sincronización**: si Debezium/Kafka Connect no logra publicar un evento, o el lado de lectura no logra aplicarlo, se registra en un log de fallos de sincronización (dead-letter / DLQ de Kafka) y se dispara una alerta, para permitir revisión y reintento manual. Este log es de naturaleza técnica/infraestructura, distinto del registro de incidencias de negocio (sección 2).
+* **Fallos de sincronización**: si Debezium/Kafka Connect no logra publicar un evento, el conector queda en `FAILED` tras sus reintentos y se dispara una alerta; los eventos no se pierden, siguen en la tabla outbox y en el WAL hasta el reinicio manual del conector (5.1, ADR-0006). Si el lado de lectura no logra aplicar un evento, va al log de fallos de sincronización (DLQ de Kafka) y se dispara una alerta, para permitir revisión y reintento manual. Este log es de naturaleza técnica/infraestructura, distinto del registro de incidencias de negocio (sección 2).
 * **Movimiento de stock en la DLQ: dejar pasar y marcar** (decidido 2026-11-01). Si un evento de un producto no se puede aplicar en la BD de lectura y va a la DLQ, **no se detiene la proyección**: los eventos siguientes de ese producto se siguen aplicando, porque detenerla congelaría el producto y puede causar un problema mayor. A cambio:
   * El `ProductStockView` y el kardex de ese producto quedan **marcados como desincronizados** (`outOfSync`), y la API de consultas lo informa en la respuesta para que nadie confíe en un saldo que puede estar mal.
   * Se genera la alerta `SYNC_FAILURE` con el `productId` y el evento fallido.
@@ -84,7 +84,7 @@ Aplica íntegramente dentro del microservicio **Inventario** (ver 4.1). Los dem�
 | Microservicio | Responsabilidad | Persistencia |
 |---|---|---|
 | **Catálogo** | Maestro de productos: SKU, nombre, categoría, unidad de medida, stock mínimo configurado. | BD única (CRUD). |
-| **Inventario** | Guías de remisión, ubicaciones, traslados, kardex, bloqueo/liberación de stock, alertas de stock mínimo / movimiento inusual / stock insuficiente. | CQRS: BD escritura (PostgreSQL) + BD lectura (MongoDB) + outbox + relay (ver 3.1), por los reportes de kardex. |
+| **Inventario** | Guías de remisión, ubicaciones, traslados, kardex, bloqueo/liberación de stock, alertas de stock mínimo / movimiento inusual / stock insuficiente / fallo de sincronización / ajuste de stock. | CQRS: BD escritura (PostgreSQL) + BD lectura (MongoDB) + outbox + relay (ver 3.1), por los reportes de kardex. |
 | **Órdenes** | Máquina de estados del pedido (2.1), scheduler de 48h, registro de incidencias (cancelaciones/devoluciones con motivo). | BD única + tabla outbox (para publicar eventos de pedido de forma confiable). |
 | **Notificaciones** | Consume cambios de estado del pedido y notifica al destinatario por SMS/email. | BD pequeña: registro de notificaciones enviadas (idempotencia y auditoría). |
 
@@ -102,7 +102,7 @@ Como el pedido se registra siempre, haya o no stock (sección 2), la verificaci�
 3. **Órdenes** consume el resultado: `StockReservado` → pasa a `RESERVADO` (desde `REGISTRADO` o `PENDIENTE`) y publica `PedidoReservado`; `StockInsuficiente` → pasa a `PENDIENTE` y publica `PedidoPendiente`.
 4. El pedido se **procesa** como paso explícito (solo desde `RESERVADO`): Órdenes pasa a `PROCESADO` y publica `PedidoProcesado`; Inventario lo consume y descuenta el stock real y el reservado (salida en el kardex).
 5. El scheduler de 48h (en Órdenes) cancela los pedidos sin procesar (`REGISTRADO`, `PENDIENTE`, `RESERVADO`) y publica `PedidoCancelado`; Inventario libera la reserva si la había. Si la cancelación es manual desde `PROCESADO`, Inventario repone el stock real. Ante `PedidoDevuelto`, Inventario repone el stock real.
-6. **Notificaciones** consume los eventos de cambio de estado (`PedidoRegistrado`, `PedidoPendiente`, `PedidoReservado` —solo si venía de `PENDIENTE`—, `PedidoEnviado`, `PedidoEntregado`, `PedidoCancelado`, `PedidoDevuelto`) y notifica al cliente. `PedidoProcesado` no se notifica.
+6. **Notificaciones** consume los eventos de cambio de estado (`PedidoRegistrado`, `PedidoPendiente`, `PedidoReservado` —solo si venía de `PENDIENTE`—, `PedidoEnviado`, `PedidoEntregado`, `PedidoCancelado`, `PedidoDevuelto`) y avisa al destinatario del pedido, tenga o no cuenta (ADR-0023). `PedidoProcesado` no se notifica.
 
 ### 4.3 Alertas y registro de incidencias
 
@@ -181,10 +181,10 @@ flowchart LR
 
     OUTBOX -. "lee WAL / binlog" .-> DEBEZIUM
     DEBEZIUM --> QSYNC
-    DEBEZIUM -. fallo al publicar .-> DLQ
 
     QSYNC --> READER --> DBR --> API_R
     READER --> IDEMP
+    READER -. fallo al aplicar .-> DLQ
 ```
 
 ## 5. Stack Transversal
@@ -214,7 +214,8 @@ Regla general (decidida 2026-11-01): **en ningún punto del sistema —consumido
 | Productores de Kafka (Debezium) | `retries` + `delivery.timeout.ms` | Acotados por tiempo: `delivery.timeout.ms` = 120 s | Error del productor → cuenta como fallo del conector (fila anterior). |
 | Llamadas síncronas a Catálogo (desde Inventario y Órdenes) | Resilience4j: TimeLimiter + Retry + CircuitBreaker | Timeout 2 s; **2 reintentos** (3 intentos), espera 200 ms → 400 ms | Error al cliente (ej. 503). Circuit breaker: ventana de 20 llamadas, se abre con ≥ 50 % de fallos, queda abierto 30 s, luego 5 llamadas de prueba (half-open). Con el circuito abierto se falla de inmediato, sin llamar a Catálogo. |
 | Proveedores de email/SMS (Notificaciones) | Resilience4j: TimeLimiter + Retry + CircuitBreaker, uno por proveedor | Timeout 5 s; **3 reintentos** (4 intentos), espera 2 s → 4 s → 8 s | Notificación en `FAILED` + mensaje a la DLQ. El consumidor de Kafka **no** reintenta además por su cuenta (ver nota). Circuit breaker con los mismos umbrales que Catálogo. |
-| DLQ | — | **0** (no hay reprocesamiento automático) | Reprocesamiento **manual** (herramienta/endpoint administrativo), para no volver a un ciclo de reintentos. |
+| DLQ | — | **0** (no hay reprocesamiento automático) | Reprocesamiento **manual** (herramienta/endpoint administrativo), para no volver a un ciclo de reintentos. Hay una DLT por topic, compartida por sus consumidores: el que falló se identifica por el header `kafka_dlt-original-consumer-group`, y el que ya lo había procesado descarta el reproceso por idempotencia (`docs/strategies/observability.md` 6.2). |
+| Reconstrucción de la proyección de un producto (`RebuildProductProjection`, Inventario) | Vuelve a leer la escritura si el proyector adelantó la vista mientras corría | **3 intentos** | `503`; la operación es idempotente y se puede volver a llamar (`docs/architecture/data-model.md` 8.6). |
 | Reservas `PENDING` (saga de stock, negocio) | Reintento ante cada ingreso de stock | Acotado por tiempo: el pedido expira (48 h configurables) y se libera | Pedido `CANCELLED` por expiración. |
 
 **Nota — no multiplicar reintentos**: cada operación reintenta en **una sola capa**. Si una llamada interna ya tiene su propio Retry de Resilience4j (Catálogo, proveedores), el error que finalmente escapa no debe volver a reintentarse completo en el consumidor de Kafka (3 × 4 = 12 intentos). Para eso, la excepción final de Resilience4j (incluido `CallNotPermittedException` del circuito abierto) se clasifica como *not retryable* en el `DefaultErrorHandler` y va directo a la DLQ.

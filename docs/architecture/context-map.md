@@ -52,7 +52,7 @@ Los proveedores de email/SMS son upstream técnicos de Notificaciones (ellos def
 
 | # | Upstream → Downstream | Patrón | Integración | Contrato | Si falla |
 |---|---|---|---|---|---|
-| R1 | Catálogo → Inventario | **Open Host Service + Published Language** (Catálogo) / **Customer-Supplier** (Inventario) | REST síncrono | API de lectura de productos: existencia/estado activo y `minimumStock` | Resilience4j: timeout 2 s, 2 reintentos, circuit breaker (README 5.1). La operación de Inventario falla (ej. 503); no se registra con datos a medias. |
+| R1 | Catálogo → Inventario | **Open Host Service + Published Language** (Catálogo) / **Customer-Supplier** (Inventario) | REST síncrono | API de lectura de productos: existencia/estado activo y `minimumStock`; `sku`, nombre y unidad para el reporte de inventario | Resilience4j: timeout 2 s, 2 reintentos, circuit breaker (README 5.1). La operación de Inventario falla (ej. 503); no se registra con datos a medias. |
 | R2 | Catálogo → Órdenes | **OHS + PL** (Catálogo) / **Anticorruption Layer** (Órdenes) | REST síncrono, solo al registrar el pedido | API de lectura de productos: estado activo, `sku`, `name`, unidad de medida | Igual que R1: el pedido no se registra y el cliente recibe error. |
 | R3 | Órdenes ⇄ Inventario | **Partnership** + **Published Language** | Asíncrono, Kafka (saga coreografiada, README 4.2), publicando vía outbox + Debezium | Eventos de pedido ↔ eventos de reserva (sección 5) | Consumidores: 3 reintentos y DLQ. Lo que no se resuelve lo cubre la expiración a 48 h. |
 | R4 | Órdenes → Notificaciones | **Published Language** (Órdenes) / **Conformist** (Notificaciones) | Asíncrono, Kafka | Los mismos eventos de pedido de R3; cada uno trae `contact` | Notificación en `FAILED` + DLQ. No afecta al pedido. |
@@ -62,7 +62,7 @@ Los proveedores de email/SMS son upstream técnicos de Notificaciones (ellos def
 
 ### 3.1 Por qué cada patrón
 
-* **R1, Customer-Supplier**: Inventario necesita de Catálogo pocos datos (que el producto exista y su `minimumStock`) y los consulta en el momento sin guardar copia. Como Catálogo es del mismo equipo, Inventario puede pedir cambios a su API, y por eso no hace falta una ACL.
+* **R1, Customer-Supplier**: Inventario necesita de Catálogo pocos datos (que el producto exista, su `minimumStock`, y `sku`, nombre y unidad para el reporte de inventario) y los consulta en el momento sin guardar copia. Como Catálogo es del mismo equipo, Inventario puede pedir cambios a su API, y por eso no hace falta una ACL.
 * **R2, ACL**: Órdenes sí **traduce y congela** los datos de Catálogo a su propio modelo. Guarda en `OrderItem` un snapshot (`sku`, `name`, unidad de medida) al registrar el pedido, así el pedido no cambia si después se renombra o desactiva el producto. La traducción vive en el adaptador de salida hacia Catálogo.
 * **R3, Partnership**: la saga hace que Órdenes e Inventario dependan uno del otro:
   * Órdenes publica los eventos que mueven el stock.
@@ -82,8 +82,8 @@ El mismo término de negocio tiene un modelo distinto en cada contexto. Esto es 
 | **Producto** | `Product`: maestro completo (sku, nombre, categoría, unidad, `minimumStock`, activo) | `ProductStock`: solo `productId` + `physicalStock`/`reservedStock` | Snapshot dentro de `OrderItem` (`productId`, `sku`, `name`, unidad) | `productName` del evento, solo para la plantilla |
 | **Pedido** | — | `StockReservation` (una por `orderId`, todo o nada) | `Order`: ciclo de vida completo | El evento recibido + `Notification` por canal |
 | **Destinatario** | — | — | `ContactInfo` y `Address` (snapshots) + `customerId` opcional (`sub` de Keycloak) | `recipient` (email o teléfono copiado de `contact`) |
-| **Alerta** | — | `Alert` (`MINIMUM_STOCK`, `UNUSUAL_MOVEMENT`, `INSUFFICIENT_STOCK`, `SYNC_FAILURE`) | `Alert` (`ORDER_CANCELLED`) | — (los fallos de envío van a `FAILED` + DLQ, sin alerta de negocio) |
-| **Cancelación / devolución** | — | Movimientos `CANCELLATION` / `RETURN` en el kardex | `Cancellation`, `OrderReturn` e `Incident` con motivo | Aviso al cliente |
+| **Alerta** | — | `Alert` (`MINIMUM_STOCK`, `UNUSUAL_MOVEMENT`, `INSUFFICIENT_STOCK`, `SYNC_FAILURE`, `STOCK_ADJUSTMENT`) | `Alert` (`ORDER_CANCELLED`) | — (los fallos de envío van a `FAILED` + DLQ, sin alerta de negocio) |
+| **Cancelación / devolución** | — | Movimientos `CANCELLATION` / `RETURN` en el kardex | `Cancellation`, `OrderReturn` e `Incident` con motivo | Aviso al destinatario |
 
 ## 5. Eventos entre contextos (Published Language)
 
@@ -122,4 +122,4 @@ Cada topic tiene su DLQ `<topic>.DLT` (README 5.1). El contrato de cada evento s
 5. **Catálogo no conoce a nadie.** No consume eventos ni llama a otros servicios; solo responde consultas. Si algún día otro contexto necesita cachear productos, Catálogo publicaría `ProductCreated`/`ProductUpdated`/`ProductDeactivated` (`domain-model.md`, Catálogo).
 6. **Notificaciones es consumidor puro.** No publica eventos ni consulta a otros contextos.
 7. **Los eventos se publican siempre vía outbox** en la misma transacción que el cambio de estado (Órdenes e Inventario), nunca directo a Kafka desde el código de negocio.
-8. **Los contratos publicados evolucionan de forma compatible.** Agregar campos opcionales está permitido. Quitar o renombrar campos requiere coordinar a los consumidores (en R3, a ambos socios).
+8. **Los contratos publicados evolucionan de forma compatible.** Agregar campos opcionales está permitido. Quitar o renombrar un campo, cambiar su tipo o volverlo obligatorio es incompatible: se publica un evento nuevo (ej. `OrderRegisteredV2`) en el mismo topic, y ambos conviven hasta que los consumidores migren (ADR-0024). CI bloquea un cambio incompatible sobre el evento existente (ADR-0028).

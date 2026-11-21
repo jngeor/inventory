@@ -118,7 +118,7 @@ build: KOAL-14 pipeline de CI por módulo
 
 * **Todo cambio de API o de evento empieza en el YAML** de `docs/api/`, en el mismo PR que el código (ADR-0021). Las reglas de rutas, tipos, errores y versiones están en `docs/api/README.md`.
 * **Cada decisión de arquitectura lleva un ADR** con `docs/adr/template.md`, numerado de forma correlativa y agregado al índice `docs/adr/README.md` en el mismo PR.
-* **Un ADR aceptado no se reescribe.** Si se amplía, se anota en su estado (`Aceptado; ampliado por ADR-XXXX`) y en sus consecuencias. Si se reemplaza, su estado pasa a `Reemplazado por ADR-XXXX`.
+* **Un ADR aceptado no cambia su decisión**: si cambia o crece, se escribe un ADR nuevo con `Amplía:` o `Reemplaza:`, y el anterior cambia su estado; si hace falta, deja en la parte afectada una remisión corta al ADR nuevo, sin reescribir su decisión. Una precisión que no cambia la decisión se escribe en el mismo ADR, con la fecha y el ticket en su estado, y una errata se corrige sin nota. El detalle está en `docs/adr/README.md`.
 * **Los términos nuevos del dominio** se agregan a `docs/glosario.md` antes de usarlos en el código o en los contratos.
 
 ## 8. Configuración y secretos

@@ -1,6 +1,6 @@
 # ADR-0019: Contrato REST con OpenAPI, versión en la ruta y errores RFC 9457
 
-* **Estado**: Aceptado; ADR-0021 reemplaza la generación del contrato desde el código y el prefijo de Órdenes y Notificaciones
+* **Estado**: Aceptado; reemplazado en parte por ADR-0021 (generación del contrato desde el código y prefijo de Órdenes y Notificaciones)
 * **Fecha**: 2026-11-07
 * **Ticket**: KOAL-4
 

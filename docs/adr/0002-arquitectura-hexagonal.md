@@ -1,6 +1,6 @@
 # ADR-0002: Arquitectura hexagonal (puertos y adaptadores) en cada microservicio
 
-* **Estado**: Aceptado; excepción de `@Transactional` en `application` agregada el 2026-11-15 (KOAL-11)
+* **Estado**: Aceptado; precisado el 2026-11-15 (KOAL-11): excepción de `@Transactional` en `application`
 * **Fecha**: 2026-10-31
 * **Ticket**: KOAL-1 (documentado en KOAL-4)
 
@@ -56,10 +56,10 @@ Las dependencias apuntan siempre hacia el núcleo. **Los puertos de entrada son 
 **Cómo se verifica**: reglas de ArchUnit en CI, en cada servicio (`docs/architecture/c4-model.md`, nivel 3):
 1. `domain` no depende de otros paquetes de la aplicación ni de Spring, Reactor, R2DBC o Kafka.
 2. `application` depende solo de `domain` (y de Reactor), nunca de `adapter`. La única excepción es `@Transactional` en `application.service`.
-
-La lista completa de reglas está en `docs/strategies/testing.md` 5.
 3. Un adaptador de entrada usa solo `application.port.in`; los adaptadores no se llaman entre sí.
 4. Solo `adapter.out.*` implementa `application.port.out`.
+
+La lista completa de reglas está en `docs/strategies/testing.md` 5.
 
 ## Referencias
 

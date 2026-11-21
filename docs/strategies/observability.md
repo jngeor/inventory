@@ -54,7 +54,7 @@ Decidido el 2026-11-15 (ADR-0027).
 | `OTEL_METRICS_EXPORTER` | `none` | Las métricas van por Micrometer (4) |
 | `OTEL_TRACES_SAMPLER` | `parentbased_always_on` | Muestreo (3.4) |
 
-* **Lo que el agent no hace**: los atributos de negocio de los spans (3.3), los campos de contexto de los logs (2.3) y las métricas propias (4.2) se agregan en el código.
+* **Lo que el agent no hace**: los atributos de negocio de los spans (3.3), los campos de contexto de los logs (6.1) y las métricas propias (4.2) se agregan en el código.
 
 ## 3. Trazas
 
@@ -109,7 +109,7 @@ Cada caso de uso que trabaja con un pedido, un producto o un evento agrega el at
 
 * **Prefijo `koala.`**, para no chocar con los atributos estándar de OpenTelemetry.
 * **Búsqueda en Tempo** con TraceQL, por ejemplo `{ span.koala.order_id = "<id>" }`. Es el primer paso de O1.
-* **Nunca datos personales** en atributos (2.3).
+* **Nunca datos personales** en atributos (6.3).
 
 ### 3.4 Muestreo
 
@@ -218,6 +218,7 @@ Decidido el 2026-11-15 (ADR-0027): las reglas las evalúa Grafana contra Prometh
 
 * **No hay log de acceso por petición** en los servicios: cada petición ya está en las trazas y en las métricas HTTP.
 * **Un mensaje a la DLT** registra el topic de origen, la partición, el offset, el `eventId`, el número de intentos y la causa (O2). La DLT conserva el payload y todos los headers del mensaje original, incluido `traceparent`, y Spring agrega los de la excepción (`kafka_dlt-*`). El número de intentos se agrega como header (`kafka_deliveryAttempt`).
+* **Una DLT por topic, compartida por sus consumidores.** `orders.order.events.DLT` recibe los fallos de Inventario y de Notificaciones. El consumidor que falló se identifica por el header `kafka_dlt-original-consumer-group`, que agrega Spring. Al reprocesarlo, el mensaje vuelve al topic original y le llega a todos sus consumidores: el que ya lo había procesado lo descarta por idempotencia (`docs/architecture/data-model.md` 3.2; en Notificaciones, por `(eventId, channel)`).
 
 ### 6.3 Datos personales y secretos
 

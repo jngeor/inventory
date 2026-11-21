@@ -16,15 +16,21 @@ Convención: la documentación de negocio (README, vision.md) se escribe en **es
 | Español | Clase |
 |---|---|
 | Producto | `Product` |
+| SKU (código de negocio del producto) | `Sku` |
+| Categoría | `Category` |
+| Unidad de medida | `UnitOfMeasure` |
+| Cantidad (siempre entera) | `Quantity` |
 | Ubicación | `Location` |
 | Pedido | `Order` |
 | Ítem de Pedido | `OrderItem` |
+| Cambio de estado del pedido (historial) | `StatusChange` |
 | Datos de contacto del destinatario del pedido | `ContactInfo` |
 | Dirección de entrega | `Address` (campo `shippingAddress`) |
 | Cancelación (datos) | `Cancellation` |
 | Devolución (datos) | `OrderReturn` |
 | Quién realiza una acción (cliente / operador / administrador / sistema) | `Actor` |
 | Kardex / Movimiento (entrada o salida) | `StockMovement` |
+| Origen de un movimiento (documento que lo genera) | `MovementSource` |
 | Alerta | `Alert` |
 | Incidencia | `Incident` |
 | Guía de Remisión | `DeliveryNote`  |
@@ -39,6 +45,9 @@ Convención: la documentación de negocio (README, vision.md) se escribe en **es
 | Reserva de stock de un pedido | `StockReservation` |
 | Traslado entre ubicaciones | `StockTransfer` |
 | Ajuste de stock (corrección de un error o de un conteo físico) | `StockAdjustment` |
+| Notificación (un aviso por un canal) | `Notification` |
+| Canal de notificación | `NotificationChannel` (`EMAIL`, `SMS`) |
+| Plantilla de notificación | `NotificationTemplate` |
 | Tipo de movimiento de kardex | `MovementType` (`INBOUND`, `OUTBOUND`, `RETURN`, `CANCELLATION`, `TRANSFER_OUT`, `TRANSFER_IN`, `ADJUSTMENT_IN`, `ADJUSTMENT_OUT`) |
 
 ## Estados del pedido (`OrderStatus`)
@@ -68,3 +77,24 @@ Convención: la documentación de negocio (README, vision.md) se escribe en **es
 | `PedidoEnviado` | `OrderShipped` |
 | `PedidoEntregado` | `OrderDelivered` |
 | `PedidoDevuelto` | `OrderReturned` |
+
+## Modelos de lectura de Inventario (MongoDB)
+
+| Español | Clase |
+|---|---|
+| Línea del kardex con su saldo acumulado | `KardexEntry` |
+| Saldo de stock de un producto, con desglose por ubicación | `ProductStockView` |
+| Alerta sin resolver | `ActiveAlertView` |
+| Desincronizado (la proyección del producto puede estar mal) | propiedad `outOfSync` |
+| Número de cambio del producto | propiedad `sequence` |
+
+## Eventos internos de Inventario
+
+Privados del CQRS de Inventario: no forman parte del lenguaje publicado (`docs/architecture/context-map.md` 5).
+
+| Español | Código |
+|---|---|
+| Movimiento de kardex registrado | `StockMovementRecorded` |
+| Stock de un producto cambiado | `ProductStockChanged` |
+| Alerta generada | `AlertRaised` |
+| Estado de alerta cambiado | `AlertStatusChanged` |

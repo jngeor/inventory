@@ -11,7 +11,7 @@ El C4 define un punto de entrada único que enruta por path hacia los cuatro mic
 ## Decisión
 
 * **Spring Cloud Gateway es el punto de entrada único**, en su variante reactiva, como un contenedor más.
-* **Solo enruta por path.** No tiene lógica de negocio ni llama a varios servicios para combinar respuestas: el panel de alertas se combina en el cliente (`docs/README.md` 4.1).
+* **Solo enruta por path.** No tiene lógica de negocio ni llama a varios servicios para combinar respuestas: el panel de alertas se combina en el cliente (`docs/README.md` 4.3).
 * **No reemplaza la validación del token.** Reenvía el `Authorization` sin cambios y cada servicio valida el JWT (ADR-0013).
 * **Participa en las trazas** para que la petición se vea desde su entrada (ADR-0014).
 * **Las rutas son configuración**, por entorno, sin direcciones fijas.

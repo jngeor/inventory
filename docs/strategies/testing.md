@@ -185,17 +185,25 @@ No corren en cada PR: necesitan carga sostenida o detener componentes.
 
 ## 9. CI
 
-Con GitHub Actions (`docs/README.md` 5). Cada servicio se construye y prueba por separado.
+Con GitHub Actions (`docs/README.md` 5), en `.github/workflows/`. Cada servicio se construye y prueba por separado.
 
-| Job | Cuándo | Qué corre |
-|---|---|---|
-| Build del servicio | Cada push y PR, por cada módulo que cambió | `mvn verify`: unitarios, ArchUnit, integración, componente y contrato del servicio, con el umbral de cobertura |
-| Contratos | Cada PR que cambia `docs/api/` | `redocly lint`, `asyncapi validate`, `oasdiff` y `asyncapi diff` contra `main` |
-| Punta a punta | Cada PR a `main` | Módulo `e2e` con las imágenes del PR |
-| Imágenes | Merge a `main` | Construye y publica en GHCR lo que cambió |
-| Rendimiento y caos | A mano (`workflow_dispatch`) | k6 y procedimientos de caos |
+| Check | Workflow | Cuándo | Qué corre |
+|---|---|---|---|
+| `build` | `build.yml` | Cada PR a `main` y cada push a `feature/**` | `mvn verify` por cada módulo que cambió: formato (Spotless), unitarios, ArchUnit, integración, componente y contrato del servicio, con el umbral de cobertura |
+| `contratos` | `docs.yml` | Cada PR a `main` | `redocly lint`, `asyncapi validate`, `oasdiff` y `asyncapi diff` contra `main` |
+| `enlaces` | `docs.yml` | Cada PR a `main` | Enlaces rotos a archivos y anclas del repo en los Markdown (lychee, sin revisar enlaces externos) |
+| `commits` | `commits.yml` | Cada PR a `main` | Formato de los commits y del título del PR (`docs/conventions.md` 4 y 5) |
+| Punta a punta | Pendiente, con el módulo `e2e` | Cada PR a `main` | Módulo `e2e` con las imágenes del PR |
+| Imágenes | Pendiente, con el primer servicio | Merge a `main` | Construye y publica en GHCR lo que cambió |
+| Rendimiento y caos | Pendiente, con `perf/` | A mano (`workflow_dispatch`) | k6 y procedimientos de caos |
 
 * **Un PR no se mergea con un job en rojo.** Un test inestable se corrige o se elimina; no se reintenta hasta que pase.
+* **Los workflows no filtran por rutas.** Un check obligatorio que no corre queda pendiente y bloquea el merge, así que todos corren en cada PR y deciden adentro si hay algo que revisar.
+* **El build por módulo** (ADR-0018):
+  * `.github/scripts/changed-modules.sh` detecta qué módulos cambiaron. En un PR compara contra la base; en un push, contra el punto donde la rama salió de `main`.
+  * Si cambió algo común (el POM padre, el wrapper de Maven, `config/` o el propio workflow), se construyen todos. Si solo cambió `docs/`, ninguno. `e2e` queda fuera: corre en su propio job.
+  * Una matriz corre `mvn -pl <módulo> verify` por cada módulo, con Java 21. Si uno falla, sus reportes de tests quedan como artefacto.
+  * El job final `build` junta los resultados y es el check obligatorio: su nombre no cambia con la matriz. Pasa si no hubo módulos que construir, por ejemplo mientras no exista `pom.xml`.
 * Docker está disponible en los runners de GitHub, así que Testcontainers corre sin configuración extra.
 
 ## 10. Pendientes

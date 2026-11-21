@@ -1,0 +1,31 @@
+# Formato de los commits y del título del PR (conventions.md 4 y 5).
+name: commits
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commits-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  commits:
+    name: commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Formato de los commits y del título
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          .github/scripts/check-commits.sh \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}"

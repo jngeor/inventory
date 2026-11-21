@@ -42,7 +42,10 @@ inventory/
 │   └── k8s/                ← manifiestos o charts para kind
 ├── perf/                   ← scripts de k6 y procedimientos de caos (testing.md 7)
 ├── docs/
-├── .github/workflows/      ← CI (testing.md 9)
+├── .github/
+│   ├── workflows/          ← CI (testing.md 9)
+│   ├── scripts/            ← scripts que usan los workflows
+│   └── rulesets/           ← protección de main, versionada (5)
 ├── .editorconfig
 ├── .gitattributes
 ├── .gitignore
@@ -97,16 +100,21 @@ build: KOAL-14 pipeline de CI por módulo
 * **Antes de abrir el PR, los commits de la rama se juntan en uno** (squash local), con el formato de la sección 4. El PR se mergea con **merge commit**, así `main` muestra un commit por ticket y el merge que lo trajo.
 * **El título del PR** es el mismo que el del commit. La descripción resume qué cambia, qué decisiones o ADRs incluye y qué queda pendiente.
 * **Antes del PR** se corren las verificaciones locales que apliquen: `mvn verify` en los módulos que cambiaron, y `redocly lint` y `asyncapi validate` si cambió `docs/api/`. En CI corren los jobs de `docs/strategies/testing.md` 9; **un PR no se mergea con un job en rojo**.
-* **Protección de `main`** (regla de rama en GitHub, que aplica también al administrador):
+* **El check `commits` valida cada commit del PR y su título** con el formato de la sección 4; los merge commits se ignoran.
+* **Protección de `main`**: un ruleset de GitHub versionado en `.github/rulesets/main.json`, que aplica también al administrador. Se importa a mano desde Settings → Rules → Rulesets; si cambia, se edita el JSON en un PR y se vuelve a importar.
   * Solo se cambia por PR: sin push directo.
   * Sin force push ni borrado de la rama.
-  * Los jobs de CI son obligatorios para mergear, en cuanto existan.
+  * Solo merge commit.
+  * Checks obligatorios: `build`, `contratos`, `enlaces` y `commits` (`docs/strategies/testing.md` 9).
   * Sin mínimo de aprobaciones, mientras el repo lo mantenga una sola persona.
 * **El force push solo se usa en la rama propia**, con `--force-with-lease`, por ejemplo para corregir el mensaje de un commit ya subido.
 
 ## 6. Código Java
 
 * **Formato con Spotless y Google Java Format en estilo AOSP** (sangría de 4 espacios). Spotless se configura en el POM padre: `mvn spotless:apply` formatea y `spotless:check` corre dentro de `mvn verify`, así que el build falla si un archivo no está formateado. Spotless también ordena los imports y quita los que no se usan.
+  * **Spotless es el único dueño del formato.** No se usa Checkstyle: sus reglas de formato chocan con las de Google Java Format, y lo que aportaría además (nombres, tamaño de los métodos) se cuida en la revisión del PR. Se puede sumar después, sin reglas de formato, si eso deja de alcanzar.
+  * La versión de Google Java Format se fija en el POM padre y solo se sube a propósito, porque una versión nueva puede cambiar el formato de archivos ya formateados.
+  * En el IDE se usa el plugin de google-java-format en estilo AOSP, para que el formato del editor coincida con el de Spotless.
 * **Nombres** con los términos de `docs/glosario.md`: PascalCase para clases y camelCase para métodos y propiedades.
 * **Comentarios y Javadoc en inglés.** Un comentario explica por qué, no qué: lo que el código ya dice no se repite.
 * **Paquetes** según ADR-0002 y `docs/architecture/c4-model.md` nivel 3, verificados por las reglas de ArchUnit de `docs/strategies/testing.md` 5.

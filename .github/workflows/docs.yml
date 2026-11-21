@@ -1,0 +1,107 @@
+# Validación de la documentación: contratos y enlaces (testing.md 9).
+#
+# Corre en todos los PR a main, sin filtro de rutas: un check obligatorio
+# del ruleset que no corre queda pendiente y bloquea el merge.
+name: docs
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  REDOCLY_CLI: "@redocly/cli@1.25.0"
+  ASYNCAPI_CLI: "@asyncapi/cli@6.3.1"
+  ASYNCAPI_METRICS: "false"
+  OASDIFF_VERSION: "1.39.0"
+  OASDIFF_SHA256: "71a85930728f367a2086077b7ae1411319421549d18473a3e8258b6451520433"
+
+jobs:
+  contracts:
+    name: contratos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del PR
+        uses: actions/checkout@v7
+        with:
+          path: head
+
+      - name: Checkout de main
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Instalar oasdiff
+        run: |
+          curl -sSfL -o oasdiff.tar.gz \
+            "https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}/oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
+          echo "${OASDIFF_SHA256}  oasdiff.tar.gz" | sha256sum -c -
+          tar -xzf oasdiff.tar.gz oasdiff
+          sudo mv oasdiff /usr/local/bin/
+
+      - name: redocly lint
+        working-directory: head/docs/api
+        run: npx --yes "$REDOCLY_CLI" lint
+
+      - name: asyncapi validate
+        working-directory: head/docs/api
+        run: |
+          for f in *.events.yaml; do
+            echo "::group::$f"
+            npx --yes "$ASYNCAPI_CLI" validate "$f"
+            echo "::endgroup::"
+          done
+
+      # common.yaml y events-common.yaml no se comparan solos: sus cambios
+      # aparecen en el diff de cada contrato que los referencia.
+      - name: oasdiff contra main
+        run: |
+          status=0
+          for f in catalog inventory orders notifications; do
+            old="base/docs/api/$f.yaml"
+            new="head/docs/api/$f.yaml"
+            if [ ! -f "$old" ]; then echo "::notice::$f.yaml es nuevo: no hay con qué comparar"; continue; fi
+            if [ ! -f "$new" ]; then echo "::error::$f.yaml se eliminó"; status=1; continue; fi
+            echo "::group::$f.yaml"
+            oasdiff breaking "$old" "$new" --fail-on ERR || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: asyncapi diff contra main
+        run: |
+          status=0
+          for old in base/docs/api/*.events.yaml; do
+            f=$(basename "$old")
+            new="head/docs/api/$f"
+            if [ ! -f "$new" ]; then echo "::error::$f se eliminó"; status=1; continue; fi
+            echo "::group::$f"
+            npx --yes "$ASYNCAPI_CLI" diff "$old" "$new" --type breaking || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  links:
+    name: enlaces
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # --offline: solo enlaces a archivos del repo y anclas; los externos
+      # no se revisan para que el check no dependa de sitios de terceros.
+      - name: Enlaces rotos en los Markdown
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --include-fragments --no-progress README.md 'docs/**/*.md'
+          fail: true

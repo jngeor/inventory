@@ -19,7 +19,10 @@ Para validar, desde esta carpeta, en PowerShell:
 
 ```powershell
 npx.cmd --yes @redocly/cli@1.25.0 lint
+Get-ChildItem *.events.yaml | ForEach-Object { npx.cmd --yes @asyncapi/cli@6.3.1 validate $_.Name }
 ```
+
+En cada PR, el check `contratos` corre lo mismo y además compara cada contrato con el de `main`, con `oasdiff breaking` y `asyncapi diff`. Un cambio incompatible lo hace fallar (ADR-0019, ADR-0024, ADR-0028; `docs/strategies/testing.md` 9). `asyncapi` pide Node 24.
 
 * Los contratos usan **OpenAPI 3.1**.
 * Cada contrato declara `servers: [{ url: /api/v1/<servicio> }]`, y sus rutas no repiten ese prefijo. `orders` y `notifications` tienen un recurso con el mismo nombre del servicio: declaran `/api/v1`, y sus rutas empiezan por `/orders` y `/notifications` (ADR-0021).
